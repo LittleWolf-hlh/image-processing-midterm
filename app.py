@@ -21,11 +21,14 @@ st.write(
 
 @st.cache_resource
 def get_yunet_onnx_model_path() -> str:
-  """優先讀取本機 ONNX 模型檔，若不存在則自動從官方下載並快取。"""
+  """確保本地 ONNX 模型完整，若損毀或過小則自動重新下載。"""
   onnx_path = "face_detection_yunet_2023mar.onnx"
   onnx_url = "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
 
-  if not os.path.exists(onnx_path) or os.path.getsize(onnx_path) < 10000:
+  # YuNet 正常檔案大小大約在 300KB 左右，若小於 100KB 代表下載不完全或損毀
+  if not os.path.exists(onnx_path) or os.path.getsize(onnx_path) < 100000:
+    if os.path.exists(onnx_path):
+      os.remove(onnx_path)  # 刪除損毀的檔案
     headers = {"User-Agent": "Mozilla/5.0"}
     req = urllib.request.Request(onnx_url, headers=headers)
     with urllib.request.urlopen(req) as resp, open(onnx_path, "wb") as f:
@@ -351,7 +354,7 @@ if uploaded_file is not None:
                   markerType=cv2.MARKER_CROSS,
                   markerSize=15,
                   thickness=2,
-            )
+              )
 
               # 四個角落的 L 型瞄準架 (Corner HUD)
               d = int(w * 0.15)
