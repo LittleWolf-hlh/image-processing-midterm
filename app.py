@@ -1,4 +1,6 @@
+from io import BytesIO
 import os
+import urllib.request
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -13,8 +15,24 @@ st.set_page_config(
 
 st.title("🖼️ AI 輔助影像處理與人臉分析系統")
 st.write(
-    "期中專題實作介面 —— 整合色彩空間分析、手動卷積濾波與智慧人臉檢測"
+    "期中專題實作介面 —— 整合色彩空間分析、手動卷積濾波與 AI 深度學習人臉偵測"
 )
+
+
+@st.cache_resource
+def get_yunet_onnx_model_path() -> str:
+  """優先讀取本機 ONNX 模型檔，若不存在則自動從官方下載並快取。"""
+  onnx_path = "face_detection_yunet_2023mar.onnx"
+  onnx_url = "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+
+  if not os.path.exists(onnx_path) or os.path.getsize(onnx_path) < 10000:
+    headers = {"User-Agent": "Mozilla/5.0"}
+    req = urllib.request.Request(onnx_url, headers=headers)
+    with urllib.request.urlopen(req) as resp, open(onnx_path, "wb") as f:
+      f.write(resp.read())
+
+  return os.path.abspath(onnx_path)
+
 
 # -------------------------------------------------------------
 # 核心一：影像載入與基礎解析
@@ -288,139 +306,94 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (動態高精度適應單人與多人合照) ---
+      # --- Tab 4: 智慧人臉偵測模組 (YuNet AI 深度學習 + 科幻 HUD 視覺) ---
       with tab4:
-        st.subheader("👤 核心四：智慧人臉自動偵測與統計")
+        st.subheader("👤 核心四：AI 深度學習人臉自動偵測與統計")
         st.write(
-            "系統自動適應單人特寫與多人合照，精準識別並以科幻 HUD 瞄準介面標記人臉。"
+            "系統採用 OpenCV YuNet AI 深度學習模型，完美支援單人特寫與多人大合照，並結合科幻"
+            " HUD 瞄準介面。"
         )
 
         img_detected = img_bgr.copy()
-        faces = []
-
-        # 嘗試使用標準 Haar 檢測（若雲端環境支援）
-        cascade_filename = "haarcascade_frontalface_default.xml"
-        try:
-          if hasattr(cv2, "CascadeClassifier") and os.path.exists(
-              cascade_filename
-          ):
-            face_cascade = cv2.CascadeClassifier(cascade_filename)
-            if face_cascade is not None and not face_cascade.empty():
-              gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-              faces = face_cascade.detectMultiScale(
-                  gray, scaleFactor=1.1, minNeighbors=4, minSize=(25, 25)
-              )
-        except Exception:
-          faces = []
-
-        # 如果 Haar 未偵測到或人數較多時，結合多尺度分割演算法確保多人合照不漏掉
-        if len(faces) <= 1:
-          ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
-          lower_skin = np.array([0, 133, 77], dtype=np.uint8)
-          upper_skin = np.array([255, 173, 127], dtype=np.uint8)
-          mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
-
-          kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-          mask = cv2.morphologyEx(
-              mask, cv2.MORPH_OPEN, kernel_morph, iterations=1
-          )
-          mask = cv2.morphologyEx(
-              mask, cv2.MORPH_CLOSE, kernel_morph, iterations=2
-          )
-
-          contours, _ = cv2.findContours(
-              mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-          )
-          candidates = []
-          for cnt in contours:
-            area = cv2.contourArea(cnt)
-            # 動態調整合照中較小臉部的面積範圍
-            if (width * height) * 0.001 < area < (width * height) * 0.25:
-              x, y, w, h = cv2.boundingRect(cnt)
-              aspect_ratio = h / float(w)
-              if 0.6 <= aspect_ratio <= 2.2:
-                candidates.append((x, y, w, h))
-
-          # 嚴格的非極大值抑制 (NMS)，避免衣服或肩膀重複框選
-          candidates = sorted(
-              candidates, key=lambda b: b[2] * b[3], reverse=True
-          )
-          detected_boxes = list(faces) if len(faces) > 0 else []
-
-          for box in candidates:
-            x, y, w, h = box
-            overlap = False
-            for fx, fy, fw, fh in detected_boxes:
-              # 提高重疊判定嚴格度，讓多張臉可以各自獨立被框出
-              if (
-                  abs(x - fx) < max(fw, w) * 0.4
-                  and abs(y - fy) < max(fh, h) * 0.4
-              ):
-                overlap = True
-                break
-            if not overlap:
-              detected_boxes.append((x, y, w, h))
-
-          faces = detected_boxes
-
-          # 若還是完全沒有，使用預設中心框
-          if len(faces) == 0:
-            fw = int(width * 0.28)
-            fh = int(fw * 1.3)
-            fx = int((width - fw) / 2)
-            fy = int((height - fh) / 2.2)
-            faces = [(fx, fy, fw, fh)]
-
-        # 繪製科幻 HUD 瞄準效果 (亮青色)
-        cyan = (255, 255, 0)
+        face_count = 0
         audit_records = []
 
-        for idx, (x, y, w, h) in enumerate(faces, start=1):
-          cv2.rectangle(img_detected, (x, y), (x + w, y + h), cyan, 1)
-          cv2.drawMarker(
-              img_detected,
-              (x + w // 2, y + h // 2),
-              cyan,
-              markerType=cv2.MARKER_CROSS,
-              markerSize=15,
-              thickness=2,
+        try:
+          model_path = get_yunet_onnx_model_path()
+          detector = cv2.FaceDetectorYN.create(
+              model=model_path,
+              config="",
+              input_size=(width, height),
+              score_threshold=0.50,
+              nms_threshold=0.3,
+              top_k=500,
           )
 
-          d = int(w * 0.15)
-          for tx, ty in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]:
-            dx = -d if tx == x + w else d
-            dy = -d if ty == y + h else d
-            cv2.line(img_detected, (tx, ty), (tx + dx, ty), cyan, 4)
-            cv2.line(img_detected, (tx, ty), (tx, ty + dy), cyan, 4)
+          _, faces = detector.detect(img_bgr)
 
-          cv2.putText(
-              img_detected,
-              "TARGET: HUMAN_FACE",
-              (x, max(0, y - 25)),
-              cv2.FONT_HERSHEY_SIMPLEX,
-              0.5,
-              cyan,
-              1,
-              cv2.LINE_AA,
-          )
-          cv2.putText(
-              img_detected,
-              "SYS_LOCK: 100%",
-              (x, max(0, y - 8)),
-              cv2.FONT_HERSHEY_SIMPLEX,
-              0.5,
-              cyan,
-              1,
-              cv2.LINE_AA,
-          )
+          # 繪製科幻 HUD 瞄準效果 (亮青色)
+          cyan = (255, 255, 0)
 
-          audit_records.append({
-              "Face ID": f"#{idx}",
-              "X 座標": x,
-              "Y 座標": y,
-              "寬度 (W)": w,
-              "高度 (H)": h,
-          })
+          if faces is not None:
+            face_count = len(faces)
+            for idx, face in enumerate(faces, start=1):
+              box = list(map(int, face[0:4]))
+              x, y, w, h = box
+              x, y = max(0, x), max(0, y)
+              confidence = float(face[-1])
+
+              # 基礎定位框 & 中心十字準星
+              cv2.rectangle(img_detected, (x, y), (x + w, y + h), cyan, 1)
+              cv2.drawMarker(
+                  img_detected,
+                  (x + w // 2, y + h // 2),
+                  cyan,
+                  markerType=cv2.MARKER_CROSS,
+                  markerSize=15,
+                  thickness=2,
+            )
+
+              # 四個角落的 L 型瞄準架 (Corner HUD)
+              d = int(w * 0.15)
+              for tx, ty in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]:
+                dx = -d if tx == x + w else d
+                dy = -d if ty == y + h else d
+                cv2.line(img_detected, (tx, ty), (tx + dx, ty), cyan, 4)
+                cv2.line(img_detected, (tx, ty), (tx, ty + dy), cyan, 4)
+
+              # 系統鎖定文字資訊
+              cv2.putText(
+                  img_detected,
+                  f"FACE #{idx} ({confidence*100:.1f}%)",
+                  (x, max(0, y - 25)),
+                  cv2.FONT_HERSHEY_SIMPLEX,
+                  0.5,
+                  cyan,
+                  1,
+                  cv2.LINE_AA,
+              )
+              cv2.putText(
+                  img_detected,
+                  "SYS_LOCK: 100%",
+                  (x, max(0, y - 8)),
+                  cv2.FONT_HERSHEY_SIMPLEX,
+                  0.5,
+                  cyan,
+                  1,
+                  cv2.LINE_AA,
+              )
+
+              audit_records.append({
+                  "Face ID": f"#{idx}",
+                  "置信度": f"{confidence*100:.2f}%",
+                  "X 座標": x,
+                  "Y 座標": y,
+                  "寬度 (W)": w,
+                  "高度 (H)": h,
+              })
+
+        except Exception as e:
+          st.error(f"⚠️ AI 模型執行發生錯誤: {e}")
 
         img_detected_rgb = cv2.cvtColor(img_detected, cv2.COLOR_BGR2RGB)
 
@@ -428,17 +401,17 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (動態識別 {len(faces)} 張人臉)",
+              caption=f"人臉偵測結果 (AI 智慧識別 {face_count} 張人臉)",
               use_container_width=True,
           )
 
         with col_res2:
           st.markdown("#### 📋 偵測結果摘要")
-          st.metric(label="偵測總人臉數", value=f"{len(faces)} 張")
+          st.metric(label="偵測總人臉數", value=f"{face_count} 張")
           st.markdown("---")
 
-          if len(faces) > 0:
-            st.success("成功動態識別並標記人臉！")
+          if face_count > 0:
+            st.success("成功以 AI 深度學習精準識別並標記人臉！")
             st.dataframe(audit_records, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
