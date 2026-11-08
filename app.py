@@ -41,7 +41,6 @@ if uploaded_file is not None:
     image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     img_name = uploaded_file.name
 else:
-    # 若無上傳則建立一張預設提示圖或使用預設載入
     image = None
     img_name = "未上傳圖片"
 
@@ -65,7 +64,6 @@ if image is not None:
         st.subheader("📌 原始影像即時預覽與中繼資訊 (Metadata)")
         col1, col2 = st.columns([1.2, 1])
         with col1:
-            # OpenCV BGR 轉 RGB 顯示
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             st.image(image_rgb, caption=f"Original Image: {img_name}", use_column_width=True)
         with col2:
@@ -105,7 +103,7 @@ if image is not None:
                 ax.grid(True, linestyle="--", alpha=0.5)
                 st.pyplot(fig)
 
-        elif color_mode == "单通道顏色分離" or color_mode == "單通道顏色分離":
+        elif color_mode == "單通道顏色分離":
             channel_choice = st.selectbox("選擇要隔離的色彩通道：", ["紅色通道 (R)", "綠色通道 (G)", "藍色通道 (B)"])
             zeros = np.zeros_like(image[:, :, 0])
             if channel_choice == "紅色通道 (R)":
@@ -137,11 +135,11 @@ if image is not None:
             yuv_channel = st.selectbox("選擇 YUV 分量模式：", ["Y (亮度分量)", "U (色度分量)", "V (色度分量)"])
             
             if yuv_channel.startswith("Y"):
-                target_chan, title_str, cmap_str = y, "Y Channel (Brightness)", 'gray'
+                target_chan, title_str = y, "Y Channel (Brightness)"
             elif yuv_channel.startswith("U"):
-                target_chan, title_str, cmap_str = u, "U Channel (Chrominance)", 'coolwarm'
+                target_chan, title_str = u, "U Channel (Chrominance)"
             else:
-                target_chan, title_str, cmap_str = v, "V Channel (Chrominance)", 'coolwarm'
+                target_chan, title_str = v, "V Channel (Chrominance)"
 
             with col_img:
                 st.image(target_chan, caption=yuv_channel, use_column_width=True, clamp=True)
@@ -162,7 +160,6 @@ if image is not None:
     with tab3:
         st.subheader("⚙️ 3×3 卷積核矩陣自訂與 PSNR 品質評估")
         
-        # 快速範本選單
         st.selectbox(
             "快速濾波範本 (選擇後將即時連動下方 9 個輸入框)：",
             list(PRESETS.keys()),
@@ -185,7 +182,6 @@ if image is not None:
 
         auto_norm = st.checkbox("啟用自動正規化 (Normalization，避免影像過曝)", value=True)
 
-        # 執行卷積運算
         kernel_to_apply = st.session_state.kernel.copy()
         if auto_norm:
             k_sum = np.sum(kernel_to_apply)
@@ -193,8 +189,6 @@ if image is not None:
                 kernel_to_apply = kernel_to_apply / k_sum
 
         filtered_img = cv2.filter2D(image, -1, kernel_to_apply)
-
-        # 計算 PSNR
         psnr_val = cv2.PSNR(image, filtered_img)
 
         col_f1, col_f2 = st.columns(2)
@@ -212,54 +206,54 @@ if image is not None:
         st.subheader("🤖 智慧人臉自動偵測與統計稽核")
         st.markdown("系統採用高門檻過濾機制，自動清除背景與衣服紋理等誤判雜訊。")
 
-        # 載入 Haar-Cascade 分類器（使用相對路徑並具備強固容錯機制）
-        cascade_path = 'haarcascade_frontalface_default.xml'
-        if not os.path.exists(cascade_path):
-            # 若本地找不到，嘗試尋找內建路徑
-            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-
-        face_cascade = cv2.CascadeClassifier(cascade_path)
-
-        if face_cascade.empty():
-            st.error("⚠️ 錯誤：無法載入 Haar-Cascade 人臉分類器 XML 模型檔！請確認專案根目錄是否包含 `haarcascade_frontalface_default.xml`。")
+        # 檢查 OpenCV 是否包含 CascadeClassifier 屬性（防範雲端環境編譯缺失）
+        if not hasattr(cv2, 'CascadeClassifier'):
+            st.warning("⚠️ 雲端環境提醒：目前的雲端 Python 執行環境未包含 `CascadeClassifier` 模組。本機端執行時功能完全正常。")
         else:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            gray = cv2.equalizeHist(gray)  # 直方圖等化前處理
+            cascade_path = 'haarcascade_frontalface_default.xml'
+            if not os.path.exists(cascade_path):
+                cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
 
-            # 高門檻防誤判參數設定
-            faces = face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.1,
-                minNeighbors=8,
-                minSize=(80, 80)
-            )
+            face_cascade = cv2.CascadeClassifier(cascade_path)
 
-            # 在圖上繪製偵測框
-            detected_img = image.copy()
-            for idx, (x, y, w, h) in enumerate(faces, start=1):
-                cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 3)
-                cv2.putText(detected_img, f"Face #{idx}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            if face_cascade.empty():
+                st.error("⚠️ 錯誤：無法載入 Haar-Cascade 人臉分類器 XML 模型檔！請確認專案根目錄是否包含 `haarcascade_frontalface_default.xml`。")
+            else:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                gray = cv2.equalizeHist(gray)
 
-            col_d1, col_d2 = st.columns([1.2, 1])
-            with col_d1:
-                st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"人臉偵測結果 (發現 {len(faces)} 張人臉)", use_column_width=True)
-            with col_d2:
-                st.markdown("#### 📋 偵測結果摘要")
-                st.success(f"成功精準識別並標記人臉！總計偵測數：**{len(faces)} 張**")
+                faces = face_cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.1,
+                    minNeighbors=8,
+                    minSize=(80, 80)
+                )
 
-                if len(faces) > 0:
-                    face_data = []
-                    for idx, (x, y, w, h) in enumerate(faces, start=1):
-                        face_data.append({
-                            "Face ID": f"#{idx}",
-                            "X 座標": x,
-                            "Y 座標": y,
-                            "寬度 (W)": w,
-                            "高度 (H)": h
-                        })
-                    st.table(face_data)
-                else:
-                    st.warning("畫面中未偵測到符合門檻的人臉，請嘗試更換測試照片。")
+                detected_img = image.copy()
+                for idx, (x, y, w, h) in enumerate(faces, start=1):
+                    cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 3)
+                    cv2.putText(detected_img, f"Face #{idx}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+                col_d1, col_d2 = st.columns([1.2, 1])
+                with col_d1:
+                    st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"人臉偵測結果 (發現 {len(faces)} 張人臉)", use_column_width=True)
+                with col_d2:
+                    st.markdown("#### 📋 偵測結果摘要")
+                    st.success(f"成功精準識別並標記人臉！總計偵測數：**{len(faces)} 張**")
+
+                    if len(faces) > 0:
+                        face_data = []
+                        for idx, (x, y, w, h) in enumerate(faces, start=1):
+                            face_data.append({
+                                "Face ID": f"#{idx}",
+                                "X 座標": x,
+                                "Y 座標": y,
+                                "寬度 (W)": w,
+                                "高度 (H)": h
+                            })
+                        st.table(face_data)
+                    else:
+                        st.warning("畫面中未偵測到符合門檻的人臉，請嘗試更換測試照片。")
 
 else:
     st.warning("👈 請從左側側邊欄上傳圖片，以啟動系統四大核心互動模組！")
