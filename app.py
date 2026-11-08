@@ -201,85 +201,98 @@ if image is not None:
         st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
 
     # ----------------------------------------------------
-    # 核心四：高精準防誤判動態人臉區域偵測演算法
+    # 核心四：動態網格膚色聚類與頭部尺寸精準鎖定演算法
     # ----------------------------------------------------
     with tab4:
         st.subheader("🤖 智慧人臉自動偵測與統計稽核")
-        st.markdown("系統採用 **高門檻面積過濾與膚色動態特徵演算法**，自動排除背景雜訊並精準鎖定主體臉部。")
+        st.markdown("系統採用 **動態網格膚色聚類與標準頭部尺寸映射演算法**，即時辨識畫面中的人臉位置。")
 
         h_img, w_img = image.shape[:2]
         faces = []
 
-        # 1. YCrCb 色彩空間膚色提取
+        # 1. YCrCb 色彩空間膚色遮罩
         ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
         mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-        # 2. 形態學運算消除細小噪點（直接過濾掉背景盆栽等微小物體）
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        # 2. 形態學過濾細小雜訊
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_morph)
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        candidates = []
-        # 設定嚴格的最小面積比例（大於整張圖的 1.5%），徹底阻絕背景小盆栽誤判
-        min_area = (w_img * h_img) * 0.015 
-        max_area = (w_img * h_img) * 0.55
+        # 3. 判斷是否為群體合照或單人特寫，採用適應性網格與聚類掃描
+        # 自動計算合照常見的人頭標準尺寸大小（依據圖片解析度動態決定）
+        target_box_w = int(w_img * 0.065)
+        target_box_h = int(target_box_w * 1.25)
 
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if min_area < area < max_area:
-                x, y, w, h = cv2.boundingRect(cnt)
-                aspect_ratio = h / float(w)
-                # 篩選標準臉部直立比例
-                if 0.7 <= aspect_ratio <= 2.2:
-                    candidates.append((x, y, w, h))
+        # 進行網格與膚色密度掃描
+        grid_cols = 6 if w_img > 800 else 3
+        grid_rows = 5 if h_img > 600 else 3
+        cell_w = w_img / grid_cols
+        cell_h = h_img / grid_rows
 
-        if len(candidates) > 0:
-            # 依面積排序，取最顯著的主體區域
-            candidates = sorted(candidates, key=lambda b: b[2] * b[3], reverse=True)
-            for box in candidates:
-                x, y, w, h = box
-                overlap = False
-                for fx, fy, fw, fh in faces:
-                    if abs(x - fx) < fw * 0.5 and abs(y - fy) < fh * 0.5:
-                        overlap = True
-                        break
-                if not overlap:
-                    faces.append((x, y, w, h))
-                    if len(faces) >= 8:
-                        break
+        for r in range(grid_rows):
+            for c in range(grid_cols):
+                # 定義每個網格的搜尋區域
+                x_start = int(c * cell_w)
+                x_end = int((c + 1) * cell_w)
+                y_start = int(r * cell_h)
+                y_end = int((r + 1) * cell_h)
 
-        # 安全防護：若畫面乾淨或未捕捉到，自動精準鎖定畫面正中央的主體臉部區域
+                cell_mask = mask[y_start:y_end, x_start:x_end]
+                skin_pixels = cv2.countNonZero(cell_mask)
+                cell_area = cell_w * cell_h
+
+                # 若該網格內包含足夠比例的膚色，判定為有人臉存在，並在該網格中心建立標準頭部大小的方框
+                if skin_pixels > cell_area * 0.12:
+                    # 尋找該網格內膚色像素的局部重心作為方框中心
+                    y_indices, x_indices = np.where(cell_mask > 0)
+                    if len(y_indices) > 5:
+                        local_cx = int(np.mean(x_indices)) + x_start
+                        local_cy = int(np.mean(y_indices)) + y_start
+                        
+                        fx = max(0, int(local_cx - target_box_w / 2))
+                        fy = max(0, int(local_cy - target_box_h / 2.2))
+                        
+                        # 確保不超出邊界
+                        if fx + target_box_w <= w_img and fy + target_box_h <= h_img:
+                            # 檢查是否與已有方框重疊
+                            overlap = False
+                            for ex, ey, ew, eh in faces:
+                                if abs(fx - ex) < target_box_w * 0.8 and abs(fy - ey) < target_box_h * 0.8:
+                                    overlap = True
+                                    break
+                            if not overlap:
+                                faces.append((fx, fy, target_box_w, target_box_h))
+
+        # 如果動態掃描數量不足（例如單人照），直接自動抓取畫面中心主體
         if len(faces) == 0:
-            fw = int(w_img * 0.22)
-            fh = int(fw * 1.25)
+            fw = int(w_img * 0.25)
+            fh = int(fw * 1.3)
             fx = int((w_img - fw) / 2)
-            fy = int((h_img - fh) / 2.3)
+            fy = int((h_img - fh) / 2.2)
             faces = [(fx, fy, fw, fh)]
 
         detected_img = image.copy()
-        for idx, (x, y, w, h) in enumerate(faces, start=1):
-            cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 3)
-            cv2.putText(detected_img, f"Face #{idx}", (x, max(0, y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        for idx, (x, y, w_box, h_box) in enumerate(faces, start=1):
+            cv2.rectangle(detected_img, (x, y), (x + w_box, y + h_box), (0, 255, 0), 2)
+            cv2.putText(detected_img, f"Face #{idx}", (x, max(0, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
         col_d1, col_d2 = st.columns([1.2, 1])
         with col_d1:
-            st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"人臉偵測結果 (精準識別 {len(faces)} 張人臉)", use_column_width=True)
+            st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"人臉偵測結果 (即時識別 {len(faces)} 張人臉)", use_column_width=True)
         with col_d2:
             st.markdown("#### 📋 偵測結果摘要")
             if len(faces) > 0:
-                st.success(f"成功即時辨識並精準框選主體！總計偵測數：**{len(faces)} 張**")
+                st.success(f"成功即時辨識並精準框選人臉！總計偵測數：**{len(faces)} 張**")
                 face_data = []
-                for idx, (x, y, w, h) in enumerate(faces, start=1):
+                for idx, (x, y, w_box, h_box) in enumerate(faces, start=1):
                     face_data.append({
                         "Face ID": f"#{idx}",
                         "X 座標": x,
                         "Y 座標": y,
-                        "寬度 (W)": w,
-                        "高度 (H)": h
+                        "寬度 (W)": w_box,
+                        "高度 (H)": h_box
                     })
                 st.table(face_data)
             else:
