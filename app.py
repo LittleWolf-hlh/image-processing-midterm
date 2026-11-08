@@ -1,3 +1,4 @@
+import os
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -287,85 +288,80 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (100% 雲端安全、任意人數動態適應) ---
+      # --- Tab 4: 智慧人臉偵測模組 (完整還原你的 Colab 炫酷 HUD 瞄準介面) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用多尺度色彩空間聚類演算法，完美適應任意人數，自動精準辨識人臉位置。"
+            "系統直接調用標準 Haar 檢測器，並結合科幻 HUD 瞄準介面，精準識別與標記人臉。"
         )
 
         img_detected = img_bgr.copy()
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
-        # 轉換至 YCrCb 色彩空間進行膚色與高亮度區塊提取
-        ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
-        lower_skin = np.array([0, 133, 77], dtype=np.uint8)
-        upper_skin = np.array([255, 173, 127], dtype=np.uint8)
-        mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
-
-        # 形態學清理細小雜訊
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_morph)
-
-        contours, _ = cv2.findContours(
-            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        candidates = []
-        # 動態面積範圍：同時相容大張特寫與多人合照的小臉
-        min_area = (width * height) * 0.0003
-        max_area = (width * height) * 0.35
-
-        for cnt in contours:
-          area = cv2.contourArea(cnt)
-          if min_area < area < max_area:
-            x, y, w, h = cv2.boundingRect(cnt)
-            aspect_ratio = h / float(w)
-            # 確保比例符合頭部結構且排除極端邊緣雜訊
-            if (
-                0.6 <= aspect_ratio <= 2.5
-                and x > width * 0.01
-                and x + w < width * 0.99
-            ):
-              candidates.append((x, y, w, h))
-
-        # 非極大值抑制與重疊過濾 (NMS)
-        candidates = sorted(candidates, key=lambda b: b[2] * b[3], reverse=True)
+        # 核心：直接讀取你已經上傳到專案根目錄的 XML 檔案
+        cascade_filename = "haarcascade_frontalface_default.xml"
         faces = []
-        for box in candidates:
-          x, y, w, h = box
-          overlap = False
-          for fx, fy, fw, fh in faces:
-            if abs(x - fx) < fw * 0.5 and abs(y - fy) < fh * 0.5:
-              overlap = True
-              break
-          if not overlap:
-            faces.append((x, y, w, h))
 
-        # 安全防護：若畫面為單人特寫且未被獨立切分，自動以主體中心框出
-        if len(faces) == 0:
-          fw = int(width * 0.28)
-          fh = int(fw * 1.3)
-          fx = int((width - fw) / 2)
-          fy = int((height - fh) / 2.2)
-          faces = [(fx, fy, fw, fh)]
+        if os.path.exists(cascade_filename):
+          face_cascade = cv2.CascadeClassifier(cascade_filename)
+          if not face_cascade.empty():
+            faces = face_cascade.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+            )
+        else:
+          st.error(
+              f"⚠️ 找不到模型檔案 `{cascade_filename}`，請確認該檔案已上傳至"
+              " GitHub 專案根目錄！"
+          )
 
-        face_count = len(faces)
+        # 完美還原你提供的 Colab 繪製科幻 HUD 瞄準效果 (亮青色)
+        cyan = (255, 255, 0)
         audit_records = []
 
-        for idx, (x, y, w, h) in enumerate(faces):
-          cv2.rectangle(img_detected, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        for idx, (x, y, w, h) in enumerate(faces, start=1):
+          # 基礎定位框 & 中心十字準星
+          cv2.rectangle(img_detected, (x, y), (x + w, y + h), cyan, 1)
+          cv2.drawMarker(
+              img_detected,
+              (x + w // 2, y + h // 2),
+              cyan,
+              markerType=cv2.MARKER_CROSS,
+              markerSize=15,
+              thickness=2,
+          )
+
+          # 四個角落的 L 型瞄準架 (Corner HUD)
+          d = int(w * 0.15)
+          for tx, ty in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]:
+            dx = -d if tx == x + w else d
+            dy = -d if ty == y + h else d
+            cv2.line(img_detected, (tx, ty), (tx + dx, ty), cyan, 4)
+            cv2.line(img_detected, (tx, ty), (tx, ty + dy), cyan, 4)
+
+          # 系統鎖定文字資訊
           cv2.putText(
               img_detected,
-              f"Face #{idx+1}",
+              "TARGET: HUMAN_FACE",
+              (x, max(0, y - 25)),
+              cv2.FONT_HERSHEY_SIMPLEX,
+              0.5,
+              cyan,
+              1,
+              cv2.LINE_AA,
+          )
+          cv2.putText(
+              img_detected,
+              "SYS_LOCK: 100%",
               (x, max(0, y - 8)),
               cv2.FONT_HERSHEY_SIMPLEX,
               0.5,
-              (0, 255, 0),
-              2,
+              cyan,
+              1,
+              cv2.LINE_AA,
           )
+
           audit_records.append({
-              "Face ID": idx + 1,
+              "Face ID": f"#{idx}",
               "X 座標": x,
               "Y 座標": y,
               "寬度 (W)": w,
@@ -378,16 +374,16 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (動態識別 {face_count} 張人臉)",
+              caption=f"人臉偵測結果 (動態識別 {len(faces)} 張人臉)",
               use_container_width=True,
           )
 
         with col_res2:
           st.markdown("#### 📋 偵測結果摘要")
-          st.metric(label="偵測總人臉數", value=f"{face_count} 張")
+          st.metric(label="偵測總人臉數", value=f"{len(faces)} 張")
           st.markdown("---")
 
-          if face_count > 0:
+          if len(faces) > 0:
             st.success("成功動態識別並標記人臉！")
             st.dataframe(audit_records, use_container_width=True)
           else:
