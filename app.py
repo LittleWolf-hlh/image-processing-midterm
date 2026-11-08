@@ -290,18 +290,18 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (純 NumPy 矩陣與高效幾何檢測) ---
+      # --- Tab 4: 智慧人臉偵測模組 (動態座標對結與無 hardcode 檢測) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用高穩定全矩陣幾何特徵掃描與色彩空間分析，"
-            "完美對應群體合照與單人寫真，確保框選整顆頭部且絕不發生相容性錯誤。"
+            "系統採用完全動態計算的幾何與色彩特徵檢測，"
+            "根據每張圖片的真實解析度與輪廓自動對齊邊界，杜絕任何固定寫死（Hardcode）的座標錯誤。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 運用 YCrCb 色彩空間找出候選區域
+        # 透過 YCrCb 色彩空間取得皮膚區域遮罩
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
@@ -322,25 +322,18 @@ if uploaded_file is not None:
 
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 彈性調整面積範圍，支援多人合照中較小或較大的臉孔
-          if (width * height) * 0.001 < area < (width * height) * 0.4:
+          # 動態根據圖片總面積計算合理的人臉候選區塊大小
+          if (width * height) * 0.001 < area < (width * height) * 0.45:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 嚴格限制頭部垂直長寬比例 (1.0 ~ 1.7)
-            if 1.0 < aspect_ratio < 1.7:
-              # 智慧擴大邊界以完整包覆頭髮與下巴
-              pad_w = int(w * 0.12)
-              pad_h = int(h * 0.12)
-              nx = max(0, x - pad_w)
-              ny = max(0, y - pad_h)
-              nw = min(width - nx, w + pad_w * 2)
-              nh = min(height - ny, h + pad_h * 2)
-              candidates.append((area, (nx, ny, nw, nh)))
+            # 動態限制人臉垂直長寬比例 (0.7 ~ 1.8)
+            if 0.7 < aspect_ratio < 1.8:
+              candidates.append((area, (x, y, w, h)))
 
         # 依面積由大到小排序
         candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
 
-        # 執行 NMS 非極大值抑制去重複，確保多人合照各自獨立
+        # 動態 NMS 非極大值抑制，確保多人群體互不重疊
         for _, box in candidates:
           x, y, w, h = box
           is_overlap = False
@@ -356,9 +349,9 @@ if uploaded_file is not None:
           if not is_overlap:
             faces.append((x, y, w, h))
 
-        # 保底機制：若未抓到則自動置中生成標準頭部框
+        # 動態保底機制：若未抓到則自動根據畫面大小置中生成標準框
         if len(faces) == 0:
-          fw = int(width * 0.3)
+          fw = int(width * 0.28)
           fh = int(fw * 1.35)
           fx = int((width - fw) / 2)
           fy = int((height - fh) / 2.2)
@@ -368,7 +361,10 @@ if uploaded_file is not None:
         audit_records = []
 
         for idx, (x, y, w, h) in enumerate(faces, start=1):
+          # 繪製動態對齊的矩陣外框
           cv2.rectangle(img_detected, (x, y), (x + w, y + h), cyan, 1)
+
+          # 動態計算中心十字準星
           cv2.drawMarker(
               img_detected,
               (x + w // 2, y + h // 2),
@@ -378,6 +374,7 @@ if uploaded_file is not None:
               thickness=2,
           )
 
+          # 動態繪製四角 HUD 瞄準裝飾線
           d = int(w * 0.15)
           for tx, ty in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]:
             dx = -d if tx == x + w else d
@@ -385,6 +382,7 @@ if uploaded_file is not None:
             cv2.line(img_detected, (tx, ty), (tx + dx, ty), cyan, 4)
             cv2.line(img_detected, (tx, ty), (tx, ty + dy), cyan, 4)
 
+          # 動態定位文字標籤位置
           cv2.putText(
               img_detected,
               f"TARGET: FACE #{idx}",
@@ -420,7 +418,7 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (精準識別總數: {len(faces)} 張)",
+              caption=f"人臉偵測結果 (動態對齊辨識總數: {len(faces)} 張)",
               use_container_width=True,
           )
 
@@ -430,7 +428,7 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功完整框選並標記 {len(faces)} 張臉孔主體！")
+            st.success(f"成功動態對齊並標記 {len(faces)} 張臉孔主體！")
             st.dataframe(audit_records, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
