@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import urllib.request
 
 # 設定網頁版面配置
 st.set_page_config(
@@ -48,7 +49,7 @@ st.markdown(
     '<h1 style="white-space: nowrap; font-size: 2.2rem;">🖼️ 基於 AI 輔助之互動式影像處理與人臉分析工具開發</h1>', 
     unsafe_allow_html=True
 )
-st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與即時動態膚色特徵偵測")
+st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與智慧人臉檢測")
 
 if image is not None:
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -77,7 +78,7 @@ if image is not None:
             - **色彩維度**：{c} 頻道 (RGB)
             - **檔案大小**：{file_size_kb:.2f} KB
             """)
-            st.markdown("💡 **提示**：系統已成功載入並運行於雲端即時運算環境。")
+            st.markdown("💡 **提示**：系統已成功於 Python 3.11 環境載入。")
 
     # ----------------------------------------------------
     # 核心二：多色彩空間與同步直方圖分析
@@ -201,55 +202,43 @@ if image is not None:
         st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
 
     # ----------------------------------------------------
-    # 核心四：即時 YCrCb 膚色空間與智慧特徵偵測演算法
+    # 核心四：即時標準 OpenCV 智慧人臉偵測
     # ----------------------------------------------------
     with tab4:
-        st.subheader("🤖 即時動態特徵與人臉區域偵測稽核")
-        st.markdown("系統採用 **YCrCb 色彩空間膚色分割與幾何輪廓過濾演算法**，即時計算並鎖定畫面中的臉部特徵區域。")
+        st.subheader("🤖 智慧人臉自動偵測與統計稽核")
+        st.markdown("系統採用標準 OpenCV Haar Cascade 分類器進行即時動態人臉辨識。")
 
-        # 1. 轉換至 YCrCb 色彩空間（對膚色偵測極具穩定性）
-        ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
-        
-        # 2. 設定學術標準的膚色閥值範圍 (Cr: 133~173, Cb: 77~127)
-        lower_skin = np.array([0, 133, 77], dtype=np.uint8)
-        upper_skin = np.array([255, 173, 127], dtype=np.uint8)
-        mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
+        cascade_path = 'haarcascade_frontalface_default.xml'
+        if not os.path.exists(cascade_path):
+            try:
+                xml_url = "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml"
+                urllib.request.urlretrieve(xml_url, cascade_path)
+            except Exception:
+                pass
 
-        # 3. 形態學運算：消除雜訊並平滑邊緣
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_morph)
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.equalizeHist(gray)
 
-        # 4. 尋找輪廓與幾何特徵篩選
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        h_img, w_img = image.shape[:2]
-        min_area = (w_img * h_img) * 0.002  # 過濾過小雜訊
-        max_area = (w_img * h_img) * 0.35   # 過濾過大背景區域
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30)
+        )
 
-        faces = []
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if min_area < area < max_area:
-                x, y, w, h = cv2.boundingRect(cnt)
-                aspect_ratio = h / float(w)
-                # 嚴格過濾長寬比例，確保符合人臉/頭部直立橢圓形幾何特徵 (1.0 ~ 2.0)
-                if 1.0 <= aspect_ratio <= 2.0:
-                    faces.append((x, y, w, h))
-
-        # 即時繪製檢測方框
         detected_img = image.copy()
         for idx, (x, y, w, h) in enumerate(faces, start=1):
-            cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 3)
-            cv2.putText(detected_img, f"Face #{idx}", (x, max(0, y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            cv2.putText(detected_img, f"Face #{idx}", (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
         col_d1, col_d2 = st.columns([1.2, 1])
         with col_d1:
-            st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"即時動態偵測結果 (精準識別 {len(faces)} 個特徵區域)", use_column_width=True)
+            st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"人臉偵測結果 (即時識別 {len(faces)} 張人臉)", use_column_width=True)
         with col_d2:
-            st.markdown("#### 📋 即時演算法偵測摘要")
+            st.markdown("#### 📋 偵測結果摘要")
             if len(faces) > 0:
-                st.success(f"成功透過 YCrCb 演算法即時偵測！總計鎖定：**{len(faces)} 個區域**")
+                st.success(f"成功即時識別並標記人臉！總計偵測數：**{len(faces)} 張**")
                 face_data = []
                 for idx, (x, y, w, h) in enumerate(faces, start=1):
                     face_data.append({
@@ -261,7 +250,7 @@ if image is not None:
                     })
                 st.table(face_data)
             else:
-                st.warning("畫面中未檢測到符合門檻的人臉特徵，請嘗試上傳臉部清晰的測試照片。")
+                st.warning("畫面中未偵測到符合門檻的人臉，請嘗試更換正面清晰的測試照片。")
 
 else:
     st.warning("👈 請從左側側邊欄上傳圖片，以啟動系統四大核心互動模組！")
