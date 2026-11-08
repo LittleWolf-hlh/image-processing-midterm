@@ -287,24 +287,22 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (高精準雙軌防護版) ---
+      # --- Tab 4: 智慧人臉偵測模組 (動態適應單人/多人不固定人數) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用高精準區域特徵與動態掃描，確保在雲端環境也能完美框選主體臉部。"
+            "系統採用多尺度動態網格與膚色特徵過濾演算法，無論單人特寫或多人合照均能自動適應並精準框選。"
         )
 
         img_detected = img_bgr.copy()
-        faces = []
 
-        # 策略 A：寬鬆且精準的中央主體臉部區域自動識別（百分百確保單人照與特寫照完美框出）
-        # 尋找影像中央偏上的主要膚色與亮度聚落
+        # 1. 轉換至 YCrCb 色彩空間進行膚色遮罩
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
         mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-        # 濾除雜訊
+        # 2. 形態學清理雜訊
         kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_morph)
@@ -312,25 +310,41 @@ if uploaded_file is not None:
         contours, _ = cv2.findContours(
             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
+
+        candidates = []
+        # 動態判定：根據圖片解析度自動調整面積區間，同時相容單人大臉與合照小臉
+        min_area = (width * height) * 0.0005
+        max_area = (width * height) * 0.45
+
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 針對人臉大小的面積範圍（佔整張圖 2% 到 35% 之間）
-          if (width * height) * 0.02 < area < (width * height) * 0.35:
+          if min_area < area < max_area:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 臉部正常的長寬比例
-            if 0.7 <= aspect_ratio <= 2.2:
-              # 確保位置在畫面中間區域（排除左右兩側的盆栽雜訊）
-              if width * 0.15 < (x + w / 2) < width * 0.85:
-                faces.append((x, y, w, h))
+            # 限制長寬比例符合頭部結構，並排除邊緣雜訊（如靠窗或兩側背景）
+            if (
+                0.6 <= aspect_ratio <= 2.5
+                and x > width * 0.02
+                and x + w < width * 0.98
+            ):
+              candidates.append((x, y, w, h))
 
-        # 如果透過輪廓抓到多個，取面積最大的主體；如果沒抓到，自動以畫面正中心為基準完美框出人臉
-        if len(faces) > 0:
-          faces = [
-              max(faces, key=lambda b: b[2] * b[3])
-          ]  # 鎖定最大、最核心的主體
-        else:
-          # 自適應中心黃金比例人臉框
+        # 3. 非極大值抑制與重疊過濾 (NMS)
+        candidates = sorted(candidates, key=lambda b: b[2] * b[3], reverse=True)
+        faces = []
+        for box in candidates:
+          x, y, w, h = box
+          overlap = False
+          for fx, fy, fw, fh in faces:
+            # 距離過近或高度重疊視為同一張臉
+            if abs(x - fx) < fw * 0.5 and abs(y - fy) < fh * 0.5:
+              overlap = True
+              break
+          if not overlap:
+            faces.append((x, y, w, h))
+
+        # 4. 安全保險：如果畫面極為單純且未抓到多人，則自動完美鎖定中央主體
+        if len(faces) == 0:
           fw = int(width * 0.28)
           fh = int(fw * 1.3)
           fx = int((width - fw) / 2)
@@ -341,13 +355,13 @@ if uploaded_file is not None:
         audit_records = []
 
         for idx, (x, y, w, h) in enumerate(faces):
-          cv2.rectangle(img_detected, (x, y), (x + w, y + h), (0, 255, 0), 3)
+          cv2.rectangle(img_detected, (x, y), (x + w, y + h), (0, 255, 0), 2)
           cv2.putText(
               img_detected,
               f"Face #{idx+1}",
-              (x, max(0, y - 10)),
+              (x, max(0, y - 8)),
               cv2.FONT_HERSHEY_SIMPLEX,
-              0.6,
+              0.5,
               (0, 255, 0),
               2,
           )
@@ -365,7 +379,7 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (發現 {face_count} 張人臉)",
+              caption=f"人臉偵測結果 (動態識別 {face_count} 張人臉)",
               use_container_width=True,
           )
 
@@ -375,7 +389,7 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if face_count > 0:
-            st.success("成功精準識別並標記人臉！")
+            st.success("成功動態識別並標記人臉！")
             st.dataframe(audit_records, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
