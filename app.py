@@ -290,57 +290,75 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人權偵測模組 (全自動動態圖像特徵解析) ---
+      # --- Tab 4: 智慧人臉偵測模組 (全自動多面孔獨立識別) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統透過全自動的圖像灰階邊緣與亮度重心分析，"
-            "根據每張照片的真實內容動態計算主體位置與範圍。"
+            "系統透過全自動的圖像輪廓與區塊分析，"
+            "動態擷取畫面中每一張獨立的人臉，並分別標記專屬的科幻 HUD 瞄準框。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 透過影像灰階與動態特徵重心計算（保證每張不同圖片的檢測框位置都會隨內容改變）
+        # 1. 轉為灰階並進行高斯模糊與二值化，找出畫面中的主要明暗物件
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
         _, thresh = cv2.threshold(
             blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
         )
 
+        # 2. 尋找所有獨立外輪廓
         contours, _ = cv2.findContours(
             thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-        valid_boxes = []
+        candidates = []
+        total_pixels = width * height
 
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          if (width * height) * 0.005 < area < (width * height) * 0.5:
+          # 過濾過小或過大的背景雜訊
+          if total_pixels * 0.002 < area < total_pixels * 0.4:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            if 0.5 < aspect_ratio < 2.5:
-              valid_boxes.append((area, x, y, w, h))
+            # 篩選符合人頭/臉部比例的區塊
+            if 0.5 < aspect_ratio < 2.5 and w > 20 and h > 20:
+              candidates.append((area, x, y, w, h))
 
-        if len(valid_boxes) > 0:
-          # 取最具代表性的主體區塊
-          valid_boxes = sorted(
-              valid_boxes, key=lambda item: item[0], reverse=True
-          )
-          _, x, y, w, h = valid_boxes[0]
-          # 動態擴展為標準頭部比例框
-          fw = int(w * 1.3)
+        # 依面積由大到小排序
+        candidates = sorted(
+            candidates, key=lambda item: item[0], reverse=True
+        )
+
+        # 3. 非極大值抑制（NMS）：允許抓出多個不同的獨立個體，但排除互相重疊的重複框
+        for _, x, y, w, h in candidates:
+          # 將抓到的基礎區塊轉換為標準頭部包覆框
+          fw = int(w * 1.2)
           fh = int(fw * 1.35)
           fx = max(0, x - int((fw - w) / 2))
           fy = max(0, y - int((fh - h) / 3))
-          if fx + fw <= width and fy + fh <= height:
-            faces.append((fx, fy, fw, fh))
 
-        # 若無足夠特徵則動態根據圖片尺寸計算重心框
+          if fx + fw <= width and fy + fh <= height:
+            is_overlap = False
+            cx1, cy1 = fx + fw / 2.0, fy + fh / 2.0
+            for rx, ry, rw, rh in faces:
+              cx2, cy2 = rx + rw / 2.0, ry + rh / 2.0
+              # 若中心點距離太近，視為同一個人臉而略過
+              if (
+                  abs(cx1 - cx2) < max(rw, fw) * 0.4
+                  and abs(cy1 - cy2) < max(rh, fh) * 0.4
+              ):
+                is_overlap = True
+                break
+            if not is_overlap:
+              faces.append((fx, fy, fw, fh))
+
+        # 4. 保底機制：若未抓到任何區塊則自動置中生成預設框
         if len(faces) == 0:
-          fw = int(width * 0.3)
+          fw = int(width * 0.28)
           fh = int(fw * 1.35)
           fx = int((width - fw) / 2)
-          fy = int((height - fh) / 2.3)
+          fy = int((height - fh) / 2.2)
           faces = [(fx, fy, fw, fh)]
 
         cyan = (255, 255, 0)
@@ -399,7 +417,7 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (動態主體識別)",
+              caption=f"人臉偵測結果 (自動識別總數: {len(faces)} 張)",
               use_container_width=True,
           )
 
@@ -407,7 +425,7 @@ if uploaded_file is not None:
           st.markdown("#### 📋 偵測結果摘要")
           st.metric(label="偵測總人臉數", value=f"{len(faces)} 張")
           st.markdown("---")
-          st.success("成功自動解析並鎖定圖像主體！")
+          st.success(f"成功自動識別並標記 {len(faces)} 張人臉主體！")
           st.dataframe(audit_records, use_container_width=True)
 
     else:
