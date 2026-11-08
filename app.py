@@ -201,24 +201,21 @@ if image is not None:
         st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
 
     # ----------------------------------------------------
-    # 核心四：即時動態色彩區塊與特徵偵測演算法 (非寫死)
+    # 核心四：即時動態色彩區塊與特徵偵測演算法
     # ----------------------------------------------------
     with tab4:
         st.subheader("🤖 即時動態特徵與區域偵測稽核")
         st.markdown("系統採用 **HSV 色彩空間膚色遮罩分割與即時輪廓提取 (Contour & Blob Analysis)**，完全依據您上傳的圖片內容進行動態運算。")
 
-        # 1. 轉換至 HSV 色彩空間進行即時膚色特徵提取
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         lower_skin = np.array([0, 20, 70], dtype=np.uint8)
         upper_skin = np.array([20, 255, 255], dtype=np.uint8)
         mask = cv2.inRange(hsv, lower_skin, upper_skin)
 
-        # 2. 形態學處理以去除雜訊
         kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_morph)
 
-        # 3. 尋找輪廓 (Contours)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         h_img, w_img = image.shape[:2]
@@ -231,11 +228,9 @@ if image is not None:
             if min_area < area < max_area:
                 x, y, w, h = cv2.boundingRect(cnt)
                 aspect_ratio = h / float(w)
-                # 篩選符合臉部幾何長寬比例的區塊
                 if 0.7 < aspect_ratio < 2.2 and w > 15 and h > 15:
                     faces.append((x, y, w, h))
 
-        # 動態繪製偵測方框
         detected_img = image.copy()
         for idx, (x, y, w, h) in enumerate(faces, start=1):
             cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
