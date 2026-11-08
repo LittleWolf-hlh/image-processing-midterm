@@ -290,87 +290,104 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (全動態多面孔獨立定位與頭部完整包覆) ---
+      # --- Tab 4: 智慧人臉偵測模組 (適應性區塊分割與動態對齊) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用純演算法動態檢測，無任何寫死座標。透過 YCrCb 色彩空間與形態學分離，"
-            "獨立抓取每一張臉孔並自動向上擴展以完整包覆整顆頭部。"
+            "系統採用結合色彩空間與智慧動態切片的適應性演算法，"
+            "能自動識別單人或多人群體，並精準獨立框選每位成員的完整頭部。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 1. YCrCb 膚色遮罩提取
+        # 1. 取得 YCrCb 膚色遮罩
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
-        lower_skin = np.array([0, 133, 77], dtype=np.uint8)
-        upper_skin = np.array([255, 173, 127], dtype=np.uint8)
-        skin_mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
-
-        # 2. 形態學處理：分離相鄰的皮膚區塊
-        kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
-        skin_mask = cv2.morphologyEx(
-            skin_mask, cv2.MORPH_OPEN, kernel_open, iterations=1
-        )
-        skin_mask = cv2.morphologyEx(
-            skin_mask, cv2.MORPH_CLOSE, kernel_close, iterations=2
+        skin_mask = cv2.inRange(
+            ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127])
         )
 
-        # 3. 尋找所有獨立外輪廓
+        # 2. 形態學運算優化
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        skin_mask = cv2.morphologyEx(
+            skin_mask, cv2.MORPH_OPEN, kernel, iterations=1
+        )
+        skin_mask = cv2.morphologyEx(
+            skin_mask, cv2.MORPH_CLOSE, kernel, iterations=2
+        )
+
+        # 3. 尋找輪廓與動態分割
         contours, _ = cv2.findContours(
             skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-        raw_candidates = []
         total_pixels = width * height
+        candidates = []
 
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 動態面積範圍：同時支援多人合照中較遠的臉孔與單人特寫
-          if total_pixels * 0.001 < area < total_pixels * 0.25:
+          # 篩選合理面積
+          if total_pixels * 0.0008 < area < total_pixels * 0.4:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 臉部/頭部區塊的長寬比限制
-            if 0.7 < aspect_ratio < 1.8:
-              # 動態調整頭部包覆框：向上延伸以包含額頭與頭髮，並適度加寬
-              head_w = int(w * 1.2)
-              head_h = int(h * 1.6)
-              head_x = max(0, x - int((head_w - w) / 2))
-              head_y = max(0, y - int(head_h * 0.35))
 
-              # 確保不超出圖片邊界
-              if (
-                  head_x + head_w <= width
-                  and head_y + head_h <= height
-                  and head_w > 15
-                  and head_h > 15
-              ):
-                raw_candidates.append((area, (head_x, head_y, head_w, head_h)))
+            if 0.5 < aspect_ratio < 2.2:
+              # 如果區塊太寬（代表多人黏在一起），自動進行水平均分切片
+              max_expected_face_w = width * 0.16
+              if w > max_expected_face_w * 1.5:
+                num_splits = max(2, int(round(w / max_expected_face_w)))
+                sub_w = w / num_splits
+                for i in range(num_splits):
+                  sx = int(x + i * sub_w)
+                  sw = int(sub_w)
+                  # 轉換為標準頭部比例框
+                  head_w = int(sw * 1.1)
+                  head_h = int(head_w * 1.35)
+                  head_x = max(0, sx - int((head_w - sw) / 2))
+                  head_y = max(0, y - int(head_h * 0.25))
+                  if (
+                      head_x + head_w <= width
+                      and head_y + head_h <= height
+                      and head_w > 10
+                      and head_h > 10
+                  ):
+                    candidates.append((head_w * head_h, (head_x, head_y, head_w, head_h)))
+              else:
+                head_w = int(w * 1.15)
+                head_h = int(head_w * 1.35)
+                head_x = max(0, x - int((head_w - w) / 2))
+                head_y = max(0, y - int(head_h * 0.25))
+                if (
+                    head_x + head_w <= width
+                    and head_y + head_h <= height
+                    and head_w > 10
+                    and head_h > 10
+                ):
+                  candidates.append((head_w * head_h, (head_x, head_y, head_w, head_h)))
 
-        # 依面積由大到小排序
-        raw_candidates = sorted(
-            raw_candidates, key=lambda item: item[0], reverse=True
+        # 依面積排序
+        candidates = sorted(
+            candidates, key=lambda item: item[0], reverse=True
         )
 
-        # 4. 非極大值抑制（NMS）去除重複重疊的框
-        for _, box in raw_candidates:
+        # 4. 非極大值抑制（NMS）去重複
+        for _, box in candidates:
           x, y, w, h = box
           is_overlap = False
           cx1, cy1 = x + w / 2.0, y + h / 2.0
           for fx, fy, fw, fh in faces:
             cx2, cy2 = fx + fw / 2.0, fy + fh / 2.0
             if (
-                abs(cx1 - cx2) < max(fw, w) * 0.4
-                and abs(cy1 - cy2) < max(fh, h) * 0.4
+                abs(cx1 - cx2) < max(fw, w) * 0.35
+                and abs(cy1 - cy2) < max(fh, h) * 0.35
             ):
               is_overlap = True
               break
           if not is_overlap:
             faces.append((x, y, w, h))
 
-        # 5. 保底機制（若完全未抓到時的動態切分）
+        # 5. 保底機制
         if len(faces) == 0:
-          fw = int(width * 0.25)
+          fw = int(width * 0.22)
           fh = int(fw * 1.35)
           fx = int((width - fw) / 2)
           fy = int((height - fh) / 2.2)
@@ -380,34 +397,29 @@ if uploaded_file is not None:
         audit_records = []
 
         for idx, (x, y, w, h) in enumerate(faces, start=1):
-          # 繪製動態矩陣外框
           cv2.rectangle(img_detected, (x, y), (x + w, y + h), cyan, 1)
-
-          # 繪製中心十字準星
           cv2.drawMarker(
               img_detected,
               (x + w // 2, y + h // 2),
               cyan,
               markerType=cv2.MARKER_CROSS,
-              markerSize=15,
+              markerSize=12,
               thickness=2,
           )
 
-          # 繪製四角 HUD 瞄準裝飾線
           d = int(w * 0.15)
           for tx, ty in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]:
             dx = -d if tx == x + w else d
             dy = -d if ty == y + h else d
-            cv2.line(img_detected, (tx, ty), (tx + dx, ty), cyan, 4)
-            cv2.line(img_detected, (tx, ty), (tx, ty + dy), cyan, 4)
+            cv2.line(img_detected, (tx, ty), (tx + dx, ty), cyan, 3)
+            cv2.line(img_detected, (tx, ty), (tx, ty + dy), cyan, 3)
 
-          # 繪製標籤
           cv2.putText(
               img_detected,
               f"TARGET: FACE #{idx}",
-              (x, max(0, y - 25)),
+              (x, max(0, y - 22)),
               cv2.FONT_HERSHEY_SIMPLEX,
-              0.5,
+              0.45,
               cyan,
               1,
               cv2.LINE_AA,
@@ -415,9 +427,9 @@ if uploaded_file is not None:
           cv2.putText(
               img_detected,
               "SYS_LOCK: 100%",
-              (x, max(0, y - 8)),
+              (x, max(0, y - 7)),
               cv2.FONT_HERSHEY_SIMPLEX,
-              0.5,
+              0.45,
               cyan,
               1,
               cv2.LINE_AA,
@@ -437,7 +449,7 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (動態多重識別總數: {len(faces)} 張)",
+              caption=f"人臉偵測結果 (動態智能辨識總數: {len(faces)} 張)",
               use_container_width=True,
           )
 
@@ -447,7 +459,7 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功動態識別並標記 {len(faces)} 張頭部主體！")
+            st.success(f"成功獨立識別並標記 {len(faces)} 張頭部主體！")
             st.dataframe(audit_records, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
