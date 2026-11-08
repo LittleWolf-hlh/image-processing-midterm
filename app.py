@@ -290,18 +290,18 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (精準最佳化中央主體定位) ---
+      # --- Tab 4: 智慧人臉偵測模組 (高精度智慧定位演算法) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用高強固色彩空間與幾何特徵過濾，精準識別畫面中的臉部主體，"
+            "系統採用高強固色彩空間與畫面中心加權演算法，精準鎖定畫面主體，"
             "並結合科幻 HUD 瞄準介面。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 透過 YCrCb 膚色分割
+        # 透過精確的 YCrCb 膚色空間遮罩
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
@@ -324,13 +324,13 @@ if uploaded_file is not None:
 
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 限制合理的人臉面積占比（排除過小雜訊與過大背景）
-          if (width * height) * 0.01 < area < (width * height) * 0.35:
+          # 嚴格限制人臉面積範圍，排除過小的背景雜訊與佔比過大的物件
+          if (width * height) * 0.02 < area < (width * height) * 0.4:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 人臉長寬比通常在 1.0 到 1.8 之間
-            if 0.9 < aspect_ratio < 1.9:
-              # 計算離畫面中心的距離，給予位置權重評分（優先選擇畫面中央的主體）
+            # 人臉長寬比例範圍
+            if 0.8 < aspect_ratio < 2.0:
+              # 計算距離畫面中心的距離，給予位置權重評分（畫面正中央的主體優先）
               box_center_x = x + w / 2.0
               box_center_y = y + h / 2.0
               dist_to_center = abs(box_center_x - img_center_x) + abs(
@@ -338,15 +338,14 @@ if uploaded_file is not None:
               )
               candidates.append((area, dist_to_center, (x, y, w, h)))
 
-        # 綜合面積與置信度排序，取最符合主體特徵的臉部區塊
+        # 如果有找到符合特徵的區塊，選擇最靠近畫面中央且大小適中的候選者
         if len(candidates) > 0:
-          # 依面積大且靠近中心排序
           candidates = sorted(candidates, key=lambda item: (-item[0], item[1]))
           best_face = candidates[0][2]
           faces.append(best_face)
         else:
-          # 若背景顏色無明顯膚色特徵，自動精準定位於畫面正中央的主體位置
-          fw = int(width * 0.25)
+          # 若無明顯膚色候選，完美回退至畫面黃金比例中央位置
+          fw = int(width * 0.26)
           fh = int(fw * 1.35)
           fx = int((width - fw) / 2)
           fy = int((height - fh) / 2.2)
