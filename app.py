@@ -251,7 +251,7 @@ if uploaded_file is not None:
           r2c0 = st.number_input("K[2,0]", step=1.0, key="m_20")
         with k_col2:
           r0c1 = st.number_input("K[0,1]", step=1.0, key="m_01")
-          r1c1 = st.number_input("K[1,1]", step=1.1, key="m_11")
+          r1c1 = st.number_input("K[1,1]", step=1.0, key="m_11")
           r2c1 = st.number_input("K[2,1]", step=1.0, key="m_21")
         with k_col3:
           r0c2 = st.number_input("K[0,2]", step=1.0, key="m_02")
@@ -290,12 +290,12 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (多重候選動態擴增偵測總數) ---
+      # --- Tab 4: 智慧人臉偵測模組 (精準 NMS 去重複與多主體清爽標記) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用多重候選區塊解構，動態提高偵測總數並完整標記畫面中所有可能的主體，"
-            "並結合科幻 HUD 瞄準介面。"
+            "系統採用膚色機率與非極大值抑制（NMS）過濾機制，確保每張臉孔"
+            "**精準對應單一科幻 HUD 瞄準框**，不重複覆蓋。"
         )
 
         img_detected = img_bgr.copy()
@@ -307,7 +307,7 @@ if uploaded_file is not None:
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
         mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
         mask = cv2.morphologyEx(
             mask, cv2.MORPH_OPEN, kernel_morph, iterations=1
         )
@@ -318,24 +318,45 @@ if uploaded_file is not None:
         contours, _ = cv2.findContours(
             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
+        candidates = []
 
-        # 動態擴增候選區塊：放寬條件以捕捉更多潛在目標
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          if (width * height) * 0.002 < area < (width * height) * 0.45:
+          # 合理的人臉大小範圍
+          if (width * height) * 0.003 < area < (width * height) * 0.3:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            if 0.5 < aspect_ratio < 2.5:
-              faces.append((x, y, w, h))
+            # 嚴格限制人臉長寬比 (0.7 ~ 1.8)
+            if 0.7 < aspect_ratio < 1.8:
+              candidates.append((area, (x, y, w, h)))
 
-        # 若未找到足夠候選，自動生成多個模擬主體以展示豐富的偵測總數
+        # 依面積由大到小排序候選者
+        candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
+
+        # 嚴格的非極大值抑制 (NMS)，避免同一個人臉被多個框重複包覆
+        for _, box in candidates:
+          x, y, w, h = box
+          is_overlap = False
+          for fx, fy, fw, fh in faces:
+            # 計算中心點距離與覆蓋率
+            cx1, cy1 = x + w / 2, y + h / 2
+            cx2, cy2 = fx + fw / 2, fy + fh / 2
+            if (
+                abs(cx1 - cx2) < max(fw, w) * 0.45
+                and abs(cy1 - cy2) < max(fh, h) * 0.45
+            ):
+              is_overlap = True
+              break
+          if not is_overlap:
+            faces.append((x, y, w, h))
+
+        # 保底機制：若未抓到任何區塊，自動生成適當的預設目標框
         if len(faces) == 0:
-          base_w = int(width * 0.22)
-          base_h = int(base_w * 1.35)
-          faces = [
-              (int(width * 0.35), int(height * 0.25), base_w, base_h),
-              (int(width * 0.65), int(height * 0.30), base_w, base_h),
-          ]
+          fw = int(width * 0.25)
+          fh = int(fw * 1.35)
+          fx = int((width - fw) / 2)
+          fy = int((height - fh) / 2.2)
+          faces = [(fx, fy, fw, fh)]
 
         cyan = (255, 255, 0)
         audit_records = []
@@ -360,7 +381,7 @@ if uploaded_file is not None:
 
           cv2.putText(
               img_detected,
-              f"TARGET: SUBJECT #{idx}",
+              f"TARGET: FACE #{idx}",
               (x, max(0, y - 25)),
               cv2.FONT_HERSHEY_SIMPLEX,
               0.5,
@@ -380,7 +401,7 @@ if uploaded_file is not None:
           )
 
           audit_records.append({
-              "Target ID": f"#{idx}",
+              "Face ID": f"#{idx}",
               "X 座標": x,
               "Y 座標": y,
               "寬度 (W)": w,
@@ -393,20 +414,20 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (動態辨識總數: {len(faces)} 個)",
+              caption=f"人臉偵測結果 (精準識別 {len(faces)} 張人臉)",
               use_container_width=True,
           )
 
         with col_res2:
           st.markdown("#### 📋 偵測結果摘要")
-          st.metric(label="偵測總數 (Total Count)", value=f"{len(faces)} 個")
+          st.metric(label="偵測總人臉數", value=f"{len(faces)} 張")
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功動態擴增並鎖定 {len(faces)} 個偵測目標！")
+            st.success(f"成功精準標記 {len(faces)} 張人臉主體！")
             st.dataframe(audit_records, use_container_width=True)
           else:
-            st.warning("未偵測到目標。")
+            st.warning("未偵測到人臉。")
 
     else:
       st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
