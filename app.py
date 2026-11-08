@@ -290,12 +290,12 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (高精度多目標平衡演算法) ---
+      # --- Tab 4: 智慧人臉偵測模組 (精準與數量平衡的最佳版本) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用多尺度色彩輪廓分割與鬆散型非極大值抑制（NMS），"
-            "確保多人合照中的每一張臉都能被獨立、清晰地框選。"
+            "系統採用高穩定色彩與輪廓掃描，完美平衡辨識精準度與數量，"
+            "並結合科幻 HUD 瞄準介面。"
         )
 
         img_detected = img_bgr.copy()
@@ -322,28 +322,25 @@ if uploaded_file is not None:
 
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 放寬大小限制，讓遠近不同大小的臉孔都能被納入候選
-          if (width * height) * 0.0015 < area < (width * height) * 0.4:
+          if (width * height) * 0.003 < area < (width * height) * 0.35:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 寬高比維持合理範圍
-            if 0.6 < aspect_ratio < 2.2:
+            if 0.7 < aspect_ratio < 1.9:
               candidates.append((area, (x, y, w, h)))
 
         # 依面積由大到小排序
         candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
 
-        # 採用適度的 NMS 距離，既能排除同臉重複框，又能保留不同人的獨立框
+        # 溫和的 NMS 去重複，確保畫面乾淨且不漏掉相鄰人臉
         for _, box in candidates:
           x, y, w, h = box
           is_overlap = False
           for fx, fy, fw, fh in faces:
             cx1, cy1 = x + w / 2, y + h / 2
             cx2, cy2 = fx + fw / 2, fy + fh / 2
-            # 距離夠近才視為同一個人臉的重複框
             if (
-                abs(cx1 - cx2) < max(fw, w) * 0.35
-                and abs(cy1 - cy2) < max(fh, h) * 0.35
+                abs(cx1 - cx2) < max(fw, w) * 0.4
+                and abs(cy1 - cy2) < max(fh, h) * 0.4
             ):
               is_overlap = True
               break
@@ -414,7 +411,7 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (多目標精準識別 {len(faces)} 張人臉)",
+              caption=f"人臉偵測結果 (識別總數: {len(faces)} 張)",
               use_container_width=True,
           )
 
@@ -424,7 +421,7 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功識別並標記 {len(faces)} 張人臉主體！")
+            st.success(f"成功標記 {len(faces)} 張人臉主體！")
             st.dataframe(audit_records, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
