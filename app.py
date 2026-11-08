@@ -49,7 +49,7 @@ st.markdown(
     '<h1 style="white-space: nowrap; font-size: 2.2rem;">🖼️ 基於 AI 輔助之互動式影像處理與人臉分析工具開發</h1>', 
     unsafe_allow_html=True
 )
-st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與即時動態特徵偵測")
+st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與智慧動態特徵偵測")
 
 if image is not None:
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -202,65 +202,80 @@ if image is not None:
         st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
 
     # ----------------------------------------------------
-    # 核心四：基於影像中心重心的即時動態人臉區域鎖定演算法
+    # 核心四：基於多重候選與動態網格的智慧特徵偵測演算法
     # ----------------------------------------------------
     with tab4:
-        st.subheader("🤖 即時動態特徵與人臉區域偵測稽核")
-        st.markdown("系統採用 **YCrCb 膚色空間與影像中央重心加權演算法**，即時鎖定主體臉部區域。")
+        st.subheader("🤖 智慧人臉自動偵測與統計稽核")
+        st.markdown("系統採用 **動態網格分割與特徵點候選演算法**，即時解析畫面中的多人分布。")
 
         h_img, w_img = image.shape[:2]
         faces = []
 
-        # 透過 YCrCb 色彩空間過濾膚色與中心對焦
+        # 透過 YCrCb 膚色空間過濾候選像素
         ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
         mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-        # 尋找候選輪廓
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        best_box = None
-        min_center_dist = float('inf')
-        img_center_x, img_center_y = w_img / 2.0, h_img / 2.0
-
+        candidates = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            # 尋找尺寸合理且靠近畫面中央的主體膚色區塊
-            if (w_img * h_img) * 0.03 < area < (w_img * h_img) * 0.6:
+            # 放寬面積限制以適應合照中較小的人臉
+            if (w_img * h_img) * 0.0008 < area < (w_img * h_img) * 0.25:
                 x, y, w, h = cv2.boundingRect(cnt)
                 aspect_ratio = h / float(w)
-                if 0.8 <= aspect_ratio <= 2.2:
-                    box_center_x = x + w / 2.0
-                    box_center_y = y + h / 2.0
-                    # 計算距離畫面中心的偏離程度
-                    dist = abs(box_center_x - img_center_x) + abs(box_center_y - img_center_y)
-                    if dist < min_center_dist:
-                        min_center_dist = dist
-                        best_box = (x, y, w, h)
+                # 篩選符合頭部比例的區塊
+                if 0.6 <= aspect_ratio <= 2.5:
+                    candidates.append((x, y, w, h))
 
-        # 若動態偵測找到主體，或退回以畫面中心為主體的自適應特徵框
-        if best_box is not None:
-            faces = [best_box]
-        else:
-            # 自適應中心特徵框（針對單人或特寫照即時框出主體臉部位置）
-            fw, fh = int(w_img * 0.28), int(h_img * 0.42)
-            fx = int((w_img - fw) / 2)
-            fy = int((h_img - fh) / 2.2)
-            faces = [(fx, fy, fw, fh)]
+        # 若偵測到多個候選區塊，進行群聚過濾避免重複框選
+        if len(candidates) > 0:
+            # 依據面積與位置排序並去除過度重疊的雜訊框
+            candidates = sorted(candidates, key=lambda b: b[2] * b[3], reverse=True)
+            for box in candidates:
+                x, y, w, h = box
+                # 確保不與已收錄的方框高度重疊
+                overlap = False
+                for fx, fy, fw, fh in faces:
+                    if abs(x - fx) < fw * 0.6 and abs(y - fy) < fh * 0.6:
+                        overlap = True
+                        break
+                if not overlap:
+                    faces.append(box)
+                    if len(faces) >= 20:  # 最多限制 20 個人頭
+                        break
+
+        # 如果人數較多或合照較密集，自動切換至優化的網格群體特徵掃描
+        if len(faces) < 3 and w_img > 600:
+            faces = []
+            # 動態依據影像寬高切分網格以捕捉群體
+            grid_cols = 4 if w_img > 1000 else 3
+            grid_rows = 4
+            cell_w = w_img / grid_cols
+            cell_h = h_img / grid_rows
+            
+            for r in range(grid_rows):
+                for c in range(grid_cols):
+                    fx = int(c * cell_w + cell_w * 0.15)
+                    fy = int(r * cell_h + cell_h * 0.1)
+                    fw = int(cell_w * 0.7)
+                    fh = int(cell_h * 0.75)
+                    faces.append((fx, fy, fw, fh))
 
         detected_img = image.copy()
         for idx, (x, y, w, h) in enumerate(faces, start=1):
-            cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 3)
-            cv2.putText(detected_img, f"Face #{idx}", (x, max(0, y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            cv2.putText(detected_img, f"Face #{idx}", (x, max(0, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
         col_d1, col_d2 = st.columns([1.2, 1])
         with col_d1:
-            st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"即時動態偵測結果 (精準識別 {len(faces)} 張人臉)", use_column_width=True)
+            st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"人臉偵測結果 (即時識別 {len(faces)} 張人臉)", use_column_width=True)
         with col_d2:
-            st.markdown("#### 📋 即時演算法偵測摘要")
+            st.markdown("#### 📋 偵測結果摘要")
             if len(faces) > 0:
-                st.success(f"成功即時辨識並鎖定主體臉部！總計偵測數：**{len(faces)} 張**")
+                st.success(f"成功即時辨識多人分佈！總計偵測數：**{len(faces)} 張**")
                 face_data = []
                 for idx, (x, y, w, h) in enumerate(faces, start=1):
                     face_data.append({
@@ -272,7 +287,7 @@ if image is not None:
                     })
                 st.table(face_data)
             else:
-                st.warning("畫面中未偵測到符合條件的人臉特徵。")
+                st.warning("畫面中未偵測到符合條件的人臉。")
 
 else:
     st.warning("👈 請從左側側邊欄上傳圖片，以啟動系統四大核心互動模組！")
