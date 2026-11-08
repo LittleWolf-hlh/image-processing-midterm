@@ -290,18 +290,18 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (高精度智慧定位演算法) ---
+      # --- Tab 4: 智慧人臉偵測模組 (支援多主體與群體檢測) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用高強固色彩空間與畫面中心加權演算法，精準鎖定畫面主體，"
+            "系統採用多重輪廓過濾與非極大值抑制，支援**單人或多人合照**的自主檢測，"
             "並結合科幻 HUD 瞄準介面。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 透過精確的 YCrCb 膚色空間遮罩
+        # 透過 YCrCb 膚色空間遮罩
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
@@ -319,33 +319,38 @@ if uploaded_file is not None:
             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
         candidates = []
-        img_center_x = width / 2.0
-        img_center_y = height / 2.0
 
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 嚴格限制人臉面積範圍，排除過小的背景雜訊與佔比過大的物件
-          if (width * height) * 0.02 < area < (width * height) * 0.4:
+          # 允許彈性調整大小範圍，以捕捉畫面中不同遠近的多張人臉
+          if (width * height) * 0.005 < area < (width * height) * 0.4:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 人臉長寬比例範圍
-            if 0.8 < aspect_ratio < 2.0:
-              # 計算距離畫面中心的距離，給予位置權重評分（畫面正中央的主體優先）
-              box_center_x = x + w / 2.0
-              box_center_y = y + h / 2.0
-              dist_to_center = abs(box_center_x - img_center_x) + abs(
-                  box_center_y - img_center_y
-              )
-              candidates.append((area, dist_to_center, (x, y, w, h)))
+            # 寬高比例限制，確保抓到的是臉部輪廓
+            if 0.7 < aspect_ratio < 2.2:
+              candidates.append((area, (x, y, w, h)))
 
-        # 如果有找到符合特徵的區塊，選擇最靠近畫面中央且大小適中的候選者
-        if len(candidates) > 0:
-          candidates = sorted(candidates, key=lambda item: (-item[0], item[1]))
-          best_face = candidates[0][2]
-          faces.append(best_face)
-        else:
-          # 若無明顯膚色候選，完美回退至畫面黃金比例中央位置
-          fw = int(width * 0.26)
+        # 依面積由大到小排序候選區塊
+        candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
+
+        # 過濾重疊框（Non-Maximum Suppression 概念），確保多個人頭能各自獨立被框選
+        for _, box in candidates:
+          x, y, w, h = box
+          overlap = False
+          for fx, fy, fw, fh in faces:
+            # 計算重疊度，若距離過近則視為同一個主體不重複框選
+            if (
+                abs((x + w / 2) - (fx + fw / 2)) < max(fw, w) * 0.6
+                and abs((y + h / 2) - (fy + fh / 2)) < max(fh, h) * 0.6
+            ):
+              overlap = True
+              break
+          if not overlap:
+            faces.append((x, y, w, h))
+
+        # 若未偵測到任何區塊，自動回退預設中央位置
+        if len(faces) == 0:
+          fw = int(width * 0.25)
           fh = int(fw * 1.35)
           fx = int((width - fw) / 2)
           fy = int((height - fh) / 2.2)
@@ -374,7 +379,7 @@ if uploaded_file is not None:
 
           cv2.putText(
               img_detected,
-              "TARGET: HUMAN_FACE",
+              f"TARGET: FACE #{idx}",
               (x, max(0, y - 25)),
               cv2.FONT_HERSHEY_SIMPLEX,
               0.5,
@@ -417,7 +422,7 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success("成功精準鎖定主體人臉！")
+            st.success(f"成功識別並標記 {len(faces)} 個主體！")
             st.dataframe(audit_records, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
