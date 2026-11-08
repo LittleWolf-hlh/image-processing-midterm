@@ -290,12 +290,12 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (精準 NMS 去重複與多主體清爽標記) ---
+      # --- Tab 4: 智慧人臉偵測模組 (高精準主體過濾) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用膚色機率與非極大值抑制（NMS）過濾機制，確保每張臉孔"
-            "**精準對應單一科幻 HUD 瞄準框**，不重複覆蓋。"
+            "系統採用高精準膚色與幾何對稱過濾機制，"
+            "確保清晰抓取主體人臉，提供乾淨俐落的科幻 HUD 瞄準介面。"
         )
 
         img_detected = img_bgr.copy()
@@ -322,41 +322,32 @@ if uploaded_file is not None:
 
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 合理的人臉大小範圍
-          if (width * height) * 0.003 < area < (width * height) * 0.3:
+          # 嚴格限制面積比例，避免抓到大片背景
+          if (width * height) * 0.005 < area < (width * height) * 0.25:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 嚴格限制人臉長寬比 (0.7 ~ 1.8)
-            if 0.7 < aspect_ratio < 1.8:
+            # 嚴格限制人臉長寬比與合理尺寸
+            if 0.8 < aspect_ratio < 1.6 and w > 30 and h > 40:
               candidates.append((area, (x, y, w, h)))
 
-        # 依面積由大到小排序候選者
+        # 依面積由大到小排序
         candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
 
-        # 嚴格的非極大值抑制 (NMS)，避免同一個人臉被多個框重複包覆
+        # 嚴格的非極大值抑制 (NMS)
         for _, box in candidates:
           x, y, w, h = box
           is_overlap = False
           for fx, fy, fw, fh in faces:
-            # 計算中心點距離與覆蓋率
             cx1, cy1 = x + w / 2, y + h / 2
             cx2, cy2 = fx + fw / 2, fy + fh / 2
             if (
-                abs(cx1 - cx2) < max(fw, w) * 0.45
-                and abs(cy1 - cy2) < max(fh, h) * 0.45
+                abs(cx1 - cx2) < max(fw, w) * 0.5
+                and abs(cy1 - cy2) < max(fh, h) * 0.5
             ):
               is_overlap = True
               break
           if not is_overlap:
             faces.append((x, y, w, h))
-
-        # 保底機制：若未抓到任何區塊，自動生成適當的預設目標框
-        if len(faces) == 0:
-          fw = int(width * 0.25)
-          fh = int(fw * 1.35)
-          fx = int((width - fw) / 2)
-          fy = int((height - fh) / 2.2)
-          faces = [(fx, fy, fw, fh)]
 
         cyan = (255, 255, 0)
         audit_records = []
@@ -427,7 +418,7 @@ if uploaded_file is not None:
             st.success(f"成功精準標記 {len(faces)} 張人臉主體！")
             st.dataframe(audit_records, use_container_width=True)
           else:
-            st.warning("未偵測到人臉。")
+            st.warning("未偵測到清晰人臉，請確認上傳的圖片主體明確。")
 
     else:
       st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
