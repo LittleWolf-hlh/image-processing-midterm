@@ -2,7 +2,6 @@ import streamlit as st
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 
 # 設定網頁版面配置
 st.set_page_config(
@@ -48,7 +47,7 @@ st.markdown(
     '<h1 style="white-space: nowrap; font-size: 2.2rem;">🖼️ 基於 AI 輔助之互動式影像處理與人臉分析工具開發</h1>', 
     unsafe_allow_html=True
 )
-st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與即時動態特徵偵測")
+st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與智慧人臉檢測")
 
 if image is not None:
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -201,81 +200,29 @@ if image is not None:
         st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
 
     # ----------------------------------------------------
-    # 核心四：動態網格膚色聚類與頭部尺寸精準鎖定演算法
+    # 核心四：使用 OpenCV 內建標準分類器 (與本機完全一致)
     # ----------------------------------------------------
     with tab4:
         st.subheader("🤖 智慧人臉自動偵測與統計稽核")
-        st.markdown("系統採用 **動態網格膚色聚類與標準頭部尺寸映射演算法**，即時辨識畫面中的人臉位置。")
+        st.markdown("系統採用 OpenCV 內建標準 Haar Cascade 分類器進行即時動態人臉辨識。")
 
-        h_img, w_img = image.shape[:2]
-        faces = []
+        # 直接讀取 OpenCV 內建的模型路徑，確保雲端與本機行為 100% 相同
+        cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        face_cascade = cv2.CascadeClassifier(cascade_path)
 
-        # 1. YCrCb 色彩空間膚色遮罩
-        ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
-        lower_skin = np.array([0, 133, 77], dtype=np.uint8)
-        upper_skin = np.array([255, 173, 127], dtype=np.uint8)
-        mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.equalizeHist(gray)
 
-        # 2. 形態學過濾細小雜訊
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph)
-
-        # 3. 判斷是否為群體合照或單人特寫，採用適應性網格與聚類掃描
-        # 自動計算合照常見的人頭標準尺寸大小（依據圖片解析度動態決定）
-        target_box_w = int(w_img * 0.065)
-        target_box_h = int(target_box_w * 1.25)
-
-        # 進行網格與膚色密度掃描
-        grid_cols = 6 if w_img > 800 else 3
-        grid_rows = 5 if h_img > 600 else 3
-        cell_w = w_img / grid_cols
-        cell_h = h_img / grid_rows
-
-        for r in range(grid_rows):
-            for c in range(grid_cols):
-                # 定義每個網格的搜尋區域
-                x_start = int(c * cell_w)
-                x_end = int((c + 1) * cell_w)
-                y_start = int(r * cell_h)
-                y_end = int((r + 1) * cell_h)
-
-                cell_mask = mask[y_start:y_end, x_start:x_end]
-                skin_pixels = cv2.countNonZero(cell_mask)
-                cell_area = cell_w * cell_h
-
-                # 若該網格內包含足夠比例的膚色，判定為有人臉存在，並在該網格中心建立標準頭部大小的方框
-                if skin_pixels > cell_area * 0.12:
-                    # 尋找該網格內膚色像素的局部重心作為方框中心
-                    y_indices, x_indices = np.where(cell_mask > 0)
-                    if len(y_indices) > 5:
-                        local_cx = int(np.mean(x_indices)) + x_start
-                        local_cy = int(np.mean(y_indices)) + y_start
-                        
-                        fx = max(0, int(local_cx - target_box_w / 2))
-                        fy = max(0, int(local_cy - target_box_h / 2.2))
-                        
-                        # 確保不超出邊界
-                        if fx + target_box_w <= w_img and fy + target_box_h <= h_img:
-                            # 檢查是否與已有方框重疊
-                            overlap = False
-                            for ex, ey, ew, eh in faces:
-                                if abs(fx - ex) < target_box_w * 0.8 and abs(fy - ey) < target_box_h * 0.8:
-                                    overlap = True
-                                    break
-                            if not overlap:
-                                faces.append((fx, fy, target_box_w, target_box_h))
-
-        # 如果動態掃描數量不足（例如單人照），直接自動抓取畫面中心主體
-        if len(faces) == 0:
-            fw = int(w_img * 0.25)
-            fh = int(fw * 1.3)
-            fx = int((w_img - fw) / 2)
-            fy = int((h_img - fh) / 2.2)
-            faces = [(fx, fy, fw, fh)]
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30)
+        )
 
         detected_img = image.copy()
-        for idx, (x, y, w_box, h_box) in enumerate(faces, start=1):
-            cv2.rectangle(detected_img, (x, y), (x + w_box, y + h_box), (0, 255, 0), 2)
+        for idx, (x, y, w, h) in enumerate(faces, start=1):
+            cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
             cv2.putText(detected_img, f"Face #{idx}", (x, max(0, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
         col_d1, col_d2 = st.columns([1.2, 1])
@@ -284,15 +231,15 @@ if image is not None:
         with col_d2:
             st.markdown("#### 📋 偵測結果摘要")
             if len(faces) > 0:
-                st.success(f"成功即時辨識並精準框選人臉！總計偵測數：**{len(faces)} 張**")
+                st.success(f"成功即時辨識並標記人臉！總計偵測數：**{len(faces)} 張**")
                 face_data = []
-                for idx, (x, y, w_box, h_box) in enumerate(faces, start=1):
+                for idx, (x, y, w, h) in enumerate(faces, start=1):
                     face_data.append({
                         "Face ID": f"#{idx}",
                         "X 座標": x,
                         "Y 座標": y,
-                        "寬度 (W)": w_box,
-                        "高度 (H)": h_box
+                        "寬度 (W)": w,
+                        "高度 (H)": h
                     })
                 st.table(face_data)
             else:
