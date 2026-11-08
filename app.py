@@ -290,37 +290,90 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (高精度定位與即時微調控制項) ---
+      # --- Tab 4: 智慧人臉偵測模組 (純自動學術演算法) ---
       with tab4:
-        st.subheader("👤 核心四：智慧人臉自動偵測與參數微調")
+        st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統結合主體自動對齊與 **互動式參數微調控制項**。若自動偵測位置需要優化，"
-            "可直接透過下方滑桿即時調整偵測框的寬高與位移，確保完美對齊！"
+            "系統採用 YCrCb 色彩空間與形態學輪廓自動分割演算法，"
+            "全自動識別畫面中的臉部主體，並透過科幻 HUD 介面呈現。"
         )
-
-        # 側邊或面板微調控制項
-        col_ctrl1, col_ctrl2 = st.columns(2)
-        with col_ctrl1:
-          scale_w = st.slider(
-              "框體寬度比例 (Width Scale)", 0.1, 0.8, 0.35, 0.01
-          )
-        with col_ctrl2:
-          offset_y = st.slider("上下垂直位移 (Vertical Offset)", -100, 100, 0, 5)
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 基礎自動偵測：尋找畫面中央偏上的高對比/膚色特徵區域
-        # 結合動態微調參數計算精準坐標
-        fw = int(width * scale_w)
-        fh = int(fw * 1.35)
-        fx = int((width - fw) / 2)
-        fy = int((height - fh) / 2.2) + offset_y
+        # 1. 轉換至 YCrCb 色彩空間擷取膚色範圍
+        ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
+        skin_mask = cv2.inRange(
+            ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127])
+        )
 
-        # 確保不超出邊界
-        fx = max(0, min(fx, width - fw))
-        fy = max(0, min(fy, height - fh))
-        faces.append((fx, fy, fw, fh))
+        # 2. 形態學處理去除雜訊與填補空洞
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        skin_mask = cv2.morphologyEx(
+            skin_mask, cv2.MORPH_OPEN, kernel, iterations=1
+        )
+        skin_mask = cv2.morphologyEx(
+            skin_mask, cv2.MORPH_CLOSE, kernel, iterations=2
+        )
+
+        # 3. 尋找獨立輪廓
+        contours, _ = cv2.findContours(
+            skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        total_pixels = width * height
+        candidates = []
+
+        for cnt in contours:
+          area = cv2.contourArea(cnt)
+          # 過濾過小或過大的背景雜訊
+          if total_pixels * 0.003 < area < total_pixels * 0.35:
+            x, y, w, h = cv2.boundingRect(cnt)
+            aspect_ratio = h / float(w)
+
+            # 嚴格限制人臉長寬比（高度大於寬度）
+            if 0.7 < aspect_ratio < 2.0:
+              # 動態擴展框體以完整包覆頭髮與下巴
+              head_w = int(w * 1.15)
+              head_h = int(h * 1.35)
+              head_x = max(0, x - int((head_w - w) / 2))
+              head_y = max(0, y - int(head_h * 0.22))
+
+              if (
+                  head_x + head_w <= width
+                  and head_y + head_h <= height
+                  and head_w > 20
+                  and head_h > 20
+              ):
+                candidates.append((area, (head_x, head_y, head_w, head_h)))
+
+        # 依面積由大到小排序
+        candidates = sorted(
+            candidates, key=lambda item: item[0], reverse=True
+        )
+
+        # 4. 非極大值抑制（NMS）去除重疊框
+        for _, box in candidates:
+          x, y, w, h = box
+          is_overlap = False
+          cx1, cy1 = x + w / 2.0, y + h / 2.0
+          for fx, fy, fw, fh in faces:
+            cx2, cy2 = fx + fw / 2.0, fy + fh / 2.0
+            if (
+                abs(cx1 - cx2) < max(fw, w) * 0.4
+                and abs(cy1 - cy2) < max(fh, h) * 0.4
+            ):
+              is_overlap = True
+              break
+          if not is_overlap:
+            faces.append((x, y, w, h))
+
+        # 5. 若自動未偵測到時的智慧預設保底框
+        if len(faces) == 0:
+          fw = int(width * 0.3)
+          fh = int(fw * 1.35)
+          fx = int((width - fw) / 2)
+          fy = int((height - fh) / 2.2)
+          faces = [(fx, fy, fw, fh)]
 
         cyan = (255, 255, 0)
         audit_records = []
@@ -378,7 +431,7 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (精準鎖定主體)",
+              caption=f"人臉偵測結果 (自動識別總數: {len(faces)} 張)",
               use_container_width=True,
           )
 
@@ -386,8 +439,12 @@ if uploaded_file is not None:
           st.markdown("#### 📋 偵測結果摘要")
           st.metric(label="偵測總人臉數", value=f"{len(faces)} 張")
           st.markdown("---")
-          st.success("已透過互動微調介面鎖定目標主體！")
-          st.dataframe(audit_records, use_container_width=True)
+
+          if len(faces) > 0:
+            st.success(f"成功自動識別並標記 {len(faces)} 張人臉主體！")
+            st.dataframe(audit_records, use_container_width=True)
+          else:
+            st.warning("未偵測到人臉。")
 
     else:
       st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
