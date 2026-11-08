@@ -303,4 +303,101 @@ if uploaded_file is not None:
             xml_name = "haarcascade_frontalface_default.xml"
             if not os.path.exists(xml_name):
               try:
-                url = f
+                url = f"https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/{xml_name}"
+                urllib.request.urlretrieve(url, xml_name)
+              except Exception:
+                pass
+
+            if os.path.exists(xml_name):
+              face_cascade = cv2.CascadeClassifier(xml_name)
+              gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+              detected = face_cascade.detectMultiScale(
+                  gray, scaleFactor=1.08, minNeighbors=4, minSize=(30, 30)
+              )
+              if len(detected) > 0:
+                for x, y, w, h in detected:
+                  # 放寬篩選條件以精準辨識在影像中佔比較大或細微的人臉
+                  if w < width * 0.8 and 0.7 < (h / float(w)) < 1.5:
+                    faces.append((int(x), int(y), int(w), int(h)))
+        except Exception:
+          faces = []
+
+        cyan = (255, 255, 0)
+        audit_records = []
+
+        for idx, (x, y, w, h) in enumerate(faces, start=1):
+          cv2.rectangle(img_detected, (x, y), (x + w, y + h), cyan, 1)
+          cv2.drawMarker(
+              img_detected,
+              (x + w // 2, y + h // 2),
+              cyan,
+              markerType=cv2.MARKER_CROSS,
+              markerSize=15,
+              thickness=2,
+          )
+
+          d = int(w * 0.15)
+          for tx, ty in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]:
+            dx = -d if tx == x + w else d
+            dy = -d if ty == y + h else d
+            cv2.line(img_detected, (tx, ty), (tx + dx, ty), cyan, 4)
+            cv2.line(img_detected, (tx, ty), (tx, ty + dy), cyan, 4)
+
+          cv2.putText(
+              img_detected,
+              f"TARGET: FACE #{idx}",
+              (x, max(0, y - 25)),
+              cv2.FONT_HERSHEY_SIMPLEX,
+              0.5,
+              cyan,
+              1,
+              cv2.LINE_AA,
+          )
+          cv2.putText(
+              img_detected,
+              "SYS_LOCK: 100%",
+              (x, max(0, y - 8)),
+              cv2.FONT_HERSHEY_SIMPLEX,
+              0.5,
+              cyan,
+              1,
+              cv2.LINE_AA,
+          )
+
+          audit_records.append({
+              "Face ID": f"#{idx}",
+              "X 座標": x,
+              "Y 座標": y,
+              "寬度 (W)": w,
+              "高度 (H)": h,
+          })
+
+        img_detected_rgb = cv2.cvtColor(img_detected, cv2.COLOR_BGR2RGB)
+
+        col_res1, col_res2 = st.columns([1.3, 0.7])
+        with col_res1:
+          st.image(
+              img_detected_rgb,
+              caption=f"人臉偵測結果 (辨識總數: {len(faces)} 張)",
+              use_container_width=True,
+          )
+
+        with col_res2:
+          st.markdown("#### 📋 偵測結果摘要")
+          st.metric(label="偵測總人臉數", value=f"{len(faces)} 張")
+          st.markdown("---")
+
+          if len(faces) > 0:
+            st.success(f"成功精準鎖定 {len(faces)} 張人臉！")
+            st.dataframe(audit_records, use_container_width=True)
+          else:
+            st.warning("未偵測到符合條件的人臉。")
+
+    else:
+      st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
+
+  except Exception as e:
+    st.error(f"❌ 讀取過程發生異常錯誤: {e}")
+
+else:
+  st.info("👈 請由左側側邊欄上傳支援的點陣圖檔案（PNG, JPG, JPEG, BMP）以啟動系統。")
