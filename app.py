@@ -291,19 +291,18 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (高穩定精準鎖定) ---
+      # --- Tab 4: 智慧人臉偵測模組 (精準無假框過濾) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用精準的主體人臉定位與科幻 HUD 瞄準介面，"
-            "確保畫面美觀、穩定且完美對應專題展示需求。"
+            "系統採用標準 Haar Cascade 分類器進行特徵檢測，"
+            "並嚴格過濾異常或過大的候選區塊，確保每一個標記框皆為真實人臉。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
         try:
-          # 安全嘗試標準 Haar 特徵檢測
           if hasattr(cv2, "CascadeClassifier"):
             xml_name = "haarcascade_frontalface_default.xml"
             if not os.path.exists(xml_name):
@@ -320,19 +319,12 @@ if uploaded_file is not None:
                   gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
               )
               if len(detected) > 0:
-                faces = [
-                    (int(x), int(y), int(w), int(h)) for (x, y, w, h) in detected
-                ]
+                for x, y, w, h in detected:
+                  # 嚴格過濾條件：寬度不得超過畫面 40%（排除跨多人的錯誤大框），且長寬比合理
+                  if w < width * 0.4 and 0.6 < (h / float(w)) < 1.8:
+                    faces.append((int(x), int(y), int(w), int(h)))
         except Exception:
           faces = []
-
-        # 安全防護備用機制：若未偵測到或環境不支援，以畫面中央產生完美比例的主體框
-        if len(faces) == 0:
-          fw = int(width * 0.32)
-          fh = int(fw * 1.35)
-          fx = int((width - fw) / 2)
-          fy = int((height - fh) / 2.2)
-          faces = [(fx, fy, fw, fh)]
 
         cyan = (255, 255, 0)
         audit_records = []
@@ -400,10 +392,10 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功穩定鎖定 {len(faces)} 張人臉主體！")
+            st.success(f"成功精準鎖定 {len(faces)} 張人臉！")
             st.dataframe(audit_records, use_container_width=True)
           else:
-            st.warning("未偵測到人臉。")
+            st.warning("未偵測到符合條件的人臉。")
 
     else:
       st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
