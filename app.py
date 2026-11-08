@@ -211,19 +211,16 @@ if image is not None:
         if not os.path.exists(cascade_path):
             cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
 
-        try:
-            face_cascade = cv2.CascadeClassifier(cascade_path)
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            gray = cv2.equalizeHist(gray)
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.equalizeHist(gray)
 
-            faces = face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.1,
-                minNeighbors=8,
-                minSize=(80, 80)
-            )
-        except Exception:
-            faces = []
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=8,
+            minSize=(80, 80)
+        )
 
         detected_img = image.copy()
         for idx, (x, y, w, h) in enumerate(faces, start=1):
@@ -248,7 +245,7 @@ if image is not None:
                     })
                 st.table(face_data)
             else:
-                st.warning("⚠️ 提示：當前雲端環境因 Python 3.14 套件限制未啟用 Cascade 模組，但在本機端可正常完整顯示 16 張人臉偵測方框與座標列表！")
+                st.warning("畫面中未偵測到符合門檻的人臉，請嘗試更換測試照片。")
 
 else:
     st.warning("👈 請從左側側邊欄上傳圖片，以啟動系統四大核心互動模組！")
