@@ -10,11 +10,11 @@ import streamlit as st
 # 頁面基本配置
 st.set_page_config(
     page_title="AI 輔助影像處理與人臉分析工具",
-    page_icon="🖼️",
+    page_icon="ሑ",
     layout="wide",
 )
 
-st.title("🖼️ AI 輔助影像處理與人臉分析系統")
+st.title("ሑ AI 輔助影像處理與人臉分析系統")
 st.write(
     "期中專題實作介面 —— 整合色彩空間分析、手動卷積濾波與智慧人臉檢測"
 )
@@ -22,7 +22,7 @@ st.write(
 # -------------------------------------------------------------
 # 核心一：影像載入與基礎解析
 # -------------------------------------------------------------
-st.sidebar.header("📁 影像檔案上傳")
+st.sidebar.header("ሒ 影像檔案上傳")
 uploaded_file = st.sidebar.file_uploader(
     "請上傳測試影像", type=["png", "jpg", "jpeg", "bmp"]
 )
@@ -38,7 +38,7 @@ if uploaded_file is not None:
       file_size_kb = uploaded_file.size / 1024
 
       st.sidebar.markdown("---")
-      st.sidebar.subheader("📊 影像中繼資訊 (Metadata)")
+      st.sidebar.subheader("ሔ 影像中繼資訊 (Metadata)")
       st.sidebar.write(f"- **檔案名稱**: {uploaded_file.name}")
       st.sidebar.write(f"- **解析度**: {width} × {height} 像素")
       st.sidebar.write(f"- **色彩維度**: {channels} 頻道 (RGB)")
@@ -61,11 +61,11 @@ if uploaded_file is not None:
             channels="RGB",
             use_container_width=True,
         )
-        st.info("💡 提示：您可以透過左側選單隨時更換不同照片。")
+        st.info("ሒ¡ 提示：您可以透過左側選單隨時更換不同照片。")
 
       # --- Tab 2: 多色彩空間轉換與同步直方圖分析 ---
       with tab2:
-        st.subheader("🎨 核心二：多色彩空間與同步直方圖分析")
+        st.subheader("ሑ¨ 核心二：多色彩空間與同步直方圖分析")
         st.write(
             "系統自動將影像轉換至不同色彩空間與通道，並同步繪製對應的像素強度直方圖。"
         )
@@ -240,7 +240,7 @@ if uploaded_file is not None:
             on_change=on_preset_change,
         )
 
-        st.markdown("#### 🛠️ 3×3 卷積核矩陣手動編輯器")
+        st.markdown("#### ሒ  3×3 卷積核矩陣手動編輯器")
         k_col1, k_col2, k_col3 = st.columns(3)
         with k_col1:
           r0c0 = st.number_input("K[0,0]", step=1.0, key="m_00")
@@ -283,16 +283,15 @@ if uploaded_file is not None:
 
         st.markdown("---")
         st.metric(
-            label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)",
+            label="ሔ 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)",
             value=f"{psnr_value:.2f} dB",
         )
 
       # --- Tab 4: 智慧人臉偵測模組 ---
       with tab4:
-        st.subheader("👤 核心四：智慧人臉自動偵測與統計")
+        st.subheader("ሒ¤ 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用標準 Haar Cascade 分類器進行特徵檢測，"
-            "並過濾異常的候選區塊，確保標記框皆為真實人臉。"
+            "系統採用高效雙 Cascade（正臉 + 側臉）特徵分類器，並自動去除重疊候選框，確保精準捕獲畫面中的所有人臉。"
         )
 
         img_detected = img_bgr.copy()
@@ -300,26 +299,57 @@ if uploaded_file is not None:
 
         try:
           if hasattr(cv2, "CascadeClassifier"):
-            xml_name = "haarcascade_frontalface_default.xml"
-            if not os.path.exists(xml_name):
+            frontal_xml = "haarcascade_frontalface_default.xml"
+            profile_xml = "haarcascade_profileface.xml"
+            
+            # 下載正面人臉分類器
+            if not os.path.exists(frontal_xml):
               try:
-                url = f"https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/{xml_name}"
-                urllib.request.urlretrieve(url, xml_name)
+                url = f"https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/{frontal_xml}"
+                urllib.request.urlretrieve(url, frontal_xml)
+              except Exception:
+                pass
+            
+            # 下載側臉人臉分類器
+            if not os.path.exists(profile_xml):
+              try:
+                url = f"https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/{profile_xml}"
+                urllib.request.urlretrieve(url, profile_xml)
               except Exception:
                 pass
 
-            if os.path.exists(xml_name):
-              face_cascade = cv2.CascadeClassifier(xml_name)
-              gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-              detected = face_cascade.detectMultiScale(
-                  gray, scaleFactor=1.08, minNeighbors=4, minSize=(30, 30)
+            gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+            gray_equalized = cv2.equalizeHist(gray) # 直方圖均衡化增強對比度，提高低光環境辨識率
+            
+            all_rects = []
+            
+            # 1. 偵測正臉 (高靈敏度配置)
+            if os.path.exists(frontal_xml):
+              face_cascade = cv2.CascadeClassifier(frontal_xml)
+              detected_front = face_cascade.detectMultiScale(
+                  gray_equalized, scaleFactor=1.05, minNeighbors=3, minSize=(20, 20)
               )
-              if len(detected) > 0:
-                for x, y, w, h in detected:
-                  # 放寬篩選條件以精準辨識在影像中佔比較大或細微的人臉
-                  if w < width * 0.8 and 0.7 < (h / float(w)) < 1.5:
-                    faces.append((int(x), int(y), int(w), int(h)))
-        except Exception:
+              for (x, y, w, h) in detected_front:
+                all_rects.append([int(x), int(y), int(w), int(h)])
+                
+            # 2. 偵測側臉 (高靈敏度配置)
+            if os.path.exists(profile_xml):
+              profile_cascade = cv2.CascadeClassifier(profile_xml)
+              detected_profile = profile_cascade.detectMultiScale(
+                  gray_equalized, scaleFactor=1.05, minNeighbors=3, minSize=(20, 20)
+              )
+              for (x, y, w, h) in detected_profile:
+                all_rects.append([int(x), int(y), int(w), int(h)])
+                
+            # 3. 使用非極大值抑制 (NMS) 合併重疊框，避免重複標註
+            if len(all_rects) > 0:
+              # 格式轉換為 OpenCV groupRectangles 支援的形態
+              rects, weights = cv2.groupRectangles(all_rects, groupThreshold=1, eps=0.2)
+              for (x, y, w, h) in rects:
+                faces.append((x, y, w, h))
+                
+        except Exception as e:
+          st.write(f"偵測過程中生效錯誤：{e}")
           faces = []
 
         cyan = (255, 255, 0)
@@ -378,12 +408,12 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (辨識總數: {len(faces)} 張)",
+              caption=f"人臉偵測結果 (分析總數: {len(faces)} 張)",
               use_container_width=True,
           )
 
         with col_res2:
-          st.markdown("#### 📋 偵測結果摘要")
+          st.markdown("#### ሑ 偵測結果摚要")
           st.metric(label="偵測總人臉數", value=f"{len(faces)} 張")
           st.markdown("---")
 
@@ -391,13 +421,13 @@ if uploaded_file is not None:
             st.success(f"成功精準鎖定 {len(faces)} 張人臉！")
             st.dataframe(audit_records, use_container_width=True)
           else:
-            st.warning("未偵測到符合條件的人臉。")
+            st.warning("未偵測到符合抑件的人臉。")
 
     else:
-      st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
+      st.error("❌ 影像解碼失敗，請確誨檔案格式是否正確。")
 
   except Exception as e:
     st.error(f"❌ 讀取過程發生異常錯誤: {e}")
 
 else:
-  st.info("👈 請由左側側邊欄上傳支援的點陣圖檔案（PNG, JPG, JPEG, BMP）以啟動系統。")
+  st.info("ሐ 請由左側側邊欄上傳支援的點陣圖檔案（PNG, JPG, JPEG, BMP）以啟動系統。")
