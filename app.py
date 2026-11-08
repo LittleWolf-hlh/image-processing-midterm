@@ -44,8 +44,11 @@ else:
     image = None
     img_name = "未上傳圖片"
 
-# 主標題
-st.title("🖼️ 基於 AI 輔助之互動式影像處理與人臉分析工具開發")
+# 主標題 (強制不換行對齊處理)
+st.markdown(
+    '<h1 style="white-space: nowrap; font-size: 2.2rem;">🖼️ 基於 AI 輔助之互動式影像處理與人臉分析工具開發</h1>', 
+    unsafe_allow_html=True
+)
 st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與智慧人臉檢測")
 
 if image is not None:
@@ -206,54 +209,50 @@ if image is not None:
         st.subheader("🤖 智慧人臉自動偵測與統計稽核")
         st.markdown("系統採用高門檻過濾機制，自動清除背景與衣服紋理等誤判雜訊。")
 
-        # 檢查 OpenCV 是否包含 CascadeClassifier 屬性（防範雲端環境編譯缺失）
-        if not hasattr(cv2, 'CascadeClassifier'):
-            st.warning("⚠️ 雲端環境提醒：目前的雲端 Python 執行環境未包含 `CascadeClassifier` 模組。本機端執行時功能完全正常。")
+        cascade_path = 'haarcascade_frontalface_default.xml'
+        if not os.path.exists(cascade_path):
+            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+
+        if face_cascade.empty():
+            st.error("⚠️ 錯誤：無法載入 Haar-Cascade 人臉分類器 XML 模型檔！請確認專案根目錄是否包含 `haarcascade_frontalface_default.xml`。")
         else:
-            cascade_path = 'haarcascade_frontalface_default.xml'
-            if not os.path.exists(cascade_path):
-                cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            gray = cv2.equalizeHist(gray)
 
-            face_cascade = cv2.CascadeClassifier(cascade_path)
+            faces = face_cascade.detectMultiScale(
+                gray,
+                scaleFactor=1.1,
+                minNeighbors=8,
+                minSize=(80, 80)
+            )
 
-            if face_cascade.empty():
-                st.error("⚠️ 錯誤：無法載入 Haar-Cascade 人臉分類器 XML 模型檔！請確認專案根目錄是否包含 `haarcascade_frontalface_default.xml`。")
-            else:
-                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                gray = cv2.equalizeHist(gray)
+            detected_img = image.copy()
+            for idx, (x, y, w, h) in enumerate(faces, start=1):
+                cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 3)
+                cv2.putText(detected_img, f"Face #{idx}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-                faces = face_cascade.detectMultiScale(
-                    gray,
-                    scaleFactor=1.1,
-                    minNeighbors=8,
-                    minSize=(80, 80)
-                )
+            col_d1, col_d2 = st.columns([1.2, 1])
+            with col_d1:
+                st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"人臉偵測結果 (發現 {len(faces)} 張人臉)", use_column_width=True)
+            with col_d2:
+                st.markdown("#### 📋 偵測結果摘要")
+                st.success(f"成功精準識別並標記人臉！總計偵測數：**{len(faces)} 張**")
 
-                detected_img = image.copy()
-                for idx, (x, y, w, h) in enumerate(faces, start=1):
-                    cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 3)
-                    cv2.putText(detected_img, f"Face #{idx}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-                col_d1, col_d2 = st.columns([1.2, 1])
-                with col_d1:
-                    st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"人臉偵測結果 (發現 {len(faces)} 張人臉)", use_column_width=True)
-                with col_d2:
-                    st.markdown("#### 📋 偵測結果摘要")
-                    st.success(f"成功精準識別並標記人臉！總計偵測數：**{len(faces)} 張**")
-
-                    if len(faces) > 0:
-                        face_data = []
-                        for idx, (x, y, w, h) in enumerate(faces, start=1):
-                            face_data.append({
-                                "Face ID": f"#{idx}",
-                                "X 座標": x,
-                                "Y 座標": y,
-                                "寬度 (W)": w,
-                                "高度 (H)": h
-                            })
-                        st.table(face_data)
-                    else:
-                        st.warning("畫面中未偵測到符合門檻的人臉，請嘗試更換測試照片。")
+                if len(faces) > 0:
+                    face_data = []
+                    for idx, (x, y, w, h) in enumerate(faces, start=1):
+                        face_data.append({
+                            "Face ID": f"#{idx}",
+                            "X 座標": x,
+                            "Y 座標": y,
+                            "寬度 (W)": w,
+                            "高度 (H)": h
+                        })
+                    st.table(face_data)
+                else:
+                    st.warning("畫面中未偵測到符合門檻的人臉，請嘗試更換測試照片。")
 
 else:
     st.warning("👈 請從左側側邊欄上傳圖片，以啟動系統四大核心互動模組！")
