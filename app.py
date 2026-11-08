@@ -201,26 +201,37 @@ if image is not None:
         st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
 
     # ----------------------------------------------------
-    # 核心四：智慧人臉自動偵測與統計
+    # 核心四：智慧人臉自動偵測與統計 (安全防護包覆)
     # ----------------------------------------------------
     with tab4:
         st.subheader("🤖 智慧人臉自動偵測與統計稽核")
         st.markdown("系統採用高門檻過濾機制，自動清除背景與衣服紋理等誤判雜訊。")
 
-        cascade_path = 'haarcascade_frontalface_default.xml'
-        if not os.path.exists(cascade_path):
-            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        faces = []
+        detection_error = False
 
-        face_cascade = cv2.CascadeClassifier(cascade_path)
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        gray = cv2.equalizeHist(gray)
+        try:
+            if hasattr(cv2, 'CascadeClassifier'):
+                cascade_path = 'haarcascade_frontalface_default.xml'
+                if not os.path.exists(cascade_path):
+                    cascade_path = os.path.join(cv2.data.haarcascades, 'haarcascade_frontalface_default.xml') if hasattr(cv2, 'data') else 'haarcascade_frontalface_default.xml'
 
-        faces = face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=8,
-            minSize=(80, 80)
-        )
+                face_cascade = cv2.CascadeClassifier(cascade_path)
+                if not face_cascade.empty():
+                    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                    gray = cv2.equalizeHist(gray)
+                    faces = face_cascade.detectMultiScale(
+                        gray,
+                        scaleFactor=1.1,
+                        minNeighbors=8,
+                        minSize=(80, 80)
+                    )
+                else:
+                    detection_error = True
+            else:
+                detection_error = True
+        except Exception:
+            detection_error = True
 
         detected_img = image.copy()
         for idx, (x, y, w, h) in enumerate(faces, start=1):
@@ -232,7 +243,9 @@ if image is not None:
             st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"人臉偵測結果 (發現 {len(faces)} 張人臉)", use_column_width=True)
         with col_d2:
             st.markdown("#### 📋 偵測結果摘要")
-            if len(faces) > 0:
+            if detection_error and len(faces) == 0:
+                st.warning("⚠️ 提示：目前雲端執行環境未支援物件偵測模組。本機端執行時可完整呈現人臉檢測與座標列表。")
+            elif len(faces) > 0:
                 st.success(f"成功精準識別並標記人臉！總計偵測數：**{len(faces)} 張**")
                 face_data = []
                 for idx, (x, y, w, h) in enumerate(faces, start=1):
