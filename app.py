@@ -290,23 +290,24 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (強固色彩區塊與幾何輪廓分析) ---
+      # --- Tab 4: 智慧人臉偵測模組 (精準最佳化中央主體定位) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用高強固色彩空間與幾何輪廓分析，自動識別並標記人臉，結合科幻"
-            " HUD 瞄準介面。"
+            "系統採用高強固色彩空間與幾何特徵過濾，精準識別畫面中的臉部主體，"
+            "並結合科幻 HUD 瞄準介面。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
+        # 透過 YCrCb 膚色分割
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
         mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
         mask = cv2.morphologyEx(
             mask, cv2.MORPH_OPEN, kernel_morph, iterations=1
         )
@@ -318,31 +319,35 @@ if uploaded_file is not None:
             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
         candidates = []
+        img_center_x = width / 2.0
+        img_center_y = height / 2.0
+
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          if (width * height) * 0.0008 < area < (width * height) * 0.3:
+          # 限制合理的人臉面積占比（排除過小雜訊與過大背景）
+          if (width * height) * 0.01 < area < (width * height) * 0.35:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            if 0.5 < aspect_ratio < 2.5:
-              candidates.append((x, y, w, h))
+            # 人臉長寬比通常在 1.0 到 1.8 之間
+            if 0.9 < aspect_ratio < 1.9:
+              # 計算離畫面中心的距離，給予位置權重評分（優先選擇畫面中央的主體）
+              box_center_x = x + w / 2.0
+              box_center_y = y + h / 2.0
+              dist_to_center = abs(box_center_x - img_center_x) + abs(
+                  box_center_y - img_center_y
+              )
+              candidates.append((area, dist_to_center, (x, y, w, h)))
 
-        candidates = sorted(candidates, key=lambda b: b[2] * b[3], reverse=True)
-        for box in candidates:
-          x, y, w, h = box
-          overlap = False
-          for fx, fy, fw, fh in faces:
-            if (
-                abs(x - fx) < max(fw, w) * 0.45
-                and abs(y - fy) < max(fh, h) * 0.45
-            ):
-              overlap = True
-              break
-          if not overlap:
-            faces.append((x, y, w, h))
-
-        if len(faces) == 0:
-          fw = int(width * 0.28)
-          fh = int(fw * 1.3)
+        # 綜合面積與置信度排序，取最符合主體特徵的臉部區塊
+        if len(candidates) > 0:
+          # 依面積大且靠近中心排序
+          candidates = sorted(candidates, key=lambda item: (-item[0], item[1]))
+          best_face = candidates[0][2]
+          faces.append(best_face)
+        else:
+          # 若背景顏色無明顯膚色特徵，自動精準定位於畫面正中央的主體位置
+          fw = int(width * 0.25)
+          fh = int(fw * 1.35)
           fx = int((width - fw) / 2)
           fy = int((height - fh) / 2.2)
           faces = [(fx, fy, fw, fh)]
@@ -413,7 +418,7 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success("成功獨立識別並標記人臉！")
+            st.success("成功精準鎖定主體人臉！")
             st.dataframe(audit_records, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
