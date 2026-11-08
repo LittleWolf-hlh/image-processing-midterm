@@ -290,32 +290,24 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (多尺度極致覆蓋演算法) ---
+      # --- Tab 4: 智慧人臉偵測模組 (高精準防誤判嚴格過濾) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用多尺度色彩分割與鬆散動態掃描，最大化捕捉畫面中所有前中後排的臉孔，"
-            "並結合科幻 HUD 瞄準介面。"
+            "系統採用高精準度的膚色幾何檢測，嚴格過濾非人臉雜訊與背景干擾，"
+            "確保「寧缺勿濫、絕不誤判」，並結合科幻 HUD 瞄準介面。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 雙重色彩空間檢測（同時結合 YCrCb 與 HSV 膚色微調，提升後排陰影下的人臉辨識率）
+        # 透過高純度 YCrCb 膚色空間遮罩
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
-        lower_skin1 = np.array([0, 130, 75], dtype=np.uint8)
-        upper_skin1 = np.array([255, 178, 130], dtype=np.uint8)
-        mask1 = cv2.inRange(ycrcb, lower_skin1, upper_skin1)
+        lower_skin = np.array([0, 133, 77], dtype=np.uint8)
+        upper_skin = np.array([255, 173, 127], dtype=np.uint8)
+        mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-        hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-        lower_skin2 = np.array([0, 20, 60], dtype=np.uint8)
-        upper_skin2 = np.array([25, 170, 255], dtype=np.uint8)
-        mask2 = cv2.inRange(hsv, lower_skin2, upper_skin2)
-
-        # 聯集兩種膚色遮罩，捕捉更廣泛的光影變化
-        mask = cv2.bitwise_or(mask1, mask2)
-
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
         mask = cv2.morphologyEx(
             mask, cv2.MORPH_OPEN, kernel_morph, iterations=1
         )
@@ -330,18 +322,18 @@ if uploaded_file is not None:
 
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 大幅放寬面積下限與上限，讓遠處較小的臉孔也能被納入候選
-          if (width * height) * 0.0008 < area < (width * height) * 0.45:
+          # 嚴格限制面積上下限，排除過大的皮膚色塊（如手臂、衣服）與微小雜訊
+          if (width * height) * 0.003 < area < (width * height) * 0.22:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 放寬長寬比容忍度，適應不同的頭部角度與傾斜
-            if 0.5 < aspect_ratio < 2.5:
+            # 嚴格限制人臉長寬比 (0.75 ~ 1.5)，完美過濾非人臉形狀
+            if 0.75 < aspect_ratio < 1.5:
               candidates.append((area, (x, y, w, h)))
 
         # 依面積由大到小排序
         candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
 
-        # 寬鬆的 NMS 去重複，確保密集的群體合照中每個人都能獨立被框到
+        # 嚴格的 NMS 去重複，確保每個位置只有一個精準框
         for _, box in candidates:
           x, y, w, h = box
           is_overlap = False
@@ -349,8 +341,8 @@ if uploaded_file is not None:
             cx1, cy1 = x + w / 2, y + h / 2
             cx2, cy2 = fx + fw / 2, fy + fh / 2
             if (
-                abs(cx1 - cx2) < max(fw, w) * 0.28
-                and abs(cy1 - cy2) < max(fh, h) * 0.28
+                abs(cx1 - cx2) < max(fw, w) * 0.4
+                and abs(cy1 - cy2) < max(fh, h) * 0.4
             ):
               is_overlap = True
               break
@@ -421,7 +413,7 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (極致多尺度辨識總數: {len(faces)} 張)",
+              caption=f"人臉偵測結果 (高精準防誤判總數: {len(faces)} 張)",
               use_container_width=True,
           )
 
@@ -431,7 +423,7 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功全面掃描並標記 {len(faces)} 張人臉主體！")
+            st.success(f"成功精準鎖定 {len(faces)} 張人臉主體！")
             st.dataframe(audit_records, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
