@@ -155,7 +155,6 @@ if uploaded_file is not None:
                   y_ch,
                   caption="Y 亮度分量",
                   use_container_width=True,
-                  clamp=True,
               )
             with col2:
               st.markdown("#### Y 分量直方圖")
@@ -166,7 +165,6 @@ if uploaded_file is not None:
                   u_ch,
                   caption="U 色度分量",
                   use_container_width=True,
-                  clamp=True,
               )
             with col2:
               st.markdown("#### U 分量直方圖")
@@ -177,13 +175,12 @@ if uploaded_file is not None:
                   v_ch,
                   caption="V 色度分量",
                   use_container_width=True,
-                  clamp=True,
               )
             with col2:
               st.markdown("#### V 分量直方圖")
               plot_histogram(v_ch, "V Channel Histogram", "red")
 
-      # --- Tab 3: 核心三 - 完美連動的手動矩陣與 PSNR 評估 ---
+      # --- Tab 3: 核心三 - 手動矩陣與 PSNR 評估 ---
       with tab3:
         st.subheader("⚙️ 核心三：自訂卷積核矩陣與 PSNR 評估")
         st.write(
@@ -191,17 +188,17 @@ if uploaded_file is not None:
             "您也可以隨時手動微調，系統將即時計算 PSNR。"
         )
 
-        if "m_00" not in st.session_state:
-          st.session_state.m_00 = 0.0
-          st.session_state.m_01 = 0.0
-          st.session_state.m_02 = 0.0
-          st.session_state.m_10 = 0.0
-          st.session_state.m_11 = 1.0
-          st.session_state.m_12 = 0.0
-          st.session_state.m_20 = 0.0
-          st.session_state.m_21 = 0.0
-          st.session_state.m_22 = 0.0
-          st.session_state.norm_chk = False
+        # 初始化 session_state，確保所有 key 都有預設值
+        if "m_00" not in st.session_state: st.session_state.m_00 = 0.0
+        if "m_01" not in st.session_state: st.session_state.m_01 = 0.0
+        if "m_02" not in st.session_state: st.session_state.m_02 = 0.0
+        if "m_10" not in st.session_state: st.session_state.m_10 = 0.0
+        if "m_11" not in st.session_state: st.session_state.m_11 = 1.0
+        if "m_12" not in st.session_state: st.session_state.m_12 = 0.0
+        if "m_20" not in st.session_state: st.session_state.m_20 = 0.0
+        if "m_21" not in st.session_state: st.session_state.m_21 = 0.0
+        if "m_22" not in st.session_state: st.session_state.m_22 = 0.0
+        if "norm_chk" not in st.session_state: st.session_state.norm_chk = False
 
         def on_preset_change():
           preset = st.session_state.k_preset
@@ -217,19 +214,18 @@ if uploaded_file is not None:
           elif preset == "盒狀模糊 (Box Blur)":
             vals = [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]]
             st.session_state.norm_chk = True
-          else:
-            vals = [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]
-            st.session_state.norm_chk = False
+          else: # 手動自訂
+            return
 
-          st.session_state.m_00 = vals[0][0]
-          st.session_state.m_01 = vals[0][1]
-          st.session_state.m_02 = vals[0][2]
-          st.session_state.m_10 = vals[1][0]
-          st.session_state.m_11 = vals[1][1]
-          st.session_state.m_12 = vals[1][2]
-          st.session_state.m_20 = vals[2][0]
-          st.session_state.m_21 = vals[2][1]
-          st.session_state.m_22 = vals[2][2]
+          st.session_state.m_00 = float(vals[0][0])
+          st.session_state.m_01 = float(vals[0][1])
+          st.session_state.m_02 = float(vals[0][2])
+          st.session_state.m_10 = float(vals[1][0])
+          st.session_state.m_11 = float(vals[1][1])
+          st.session_state.m_12 = float(vals[1][2])
+          st.session_state.m_20 = float(vals[2][0])
+          st.session_state.m_21 = float(vals[2][1])
+          st.session_state.m_22 = float(vals[2][2])
 
         st.selectbox(
             "快速濾波範本 (選擇後將即時連動下方 9 個輸入框)",
@@ -291,12 +287,12 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (精準無假框過濾) ---
+      # --- Tab 4: 智慧人臉偵測模組 ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
             "系統採用標準 Haar Cascade 分類器進行特徵檢測，"
-            "並嚴格過濾異常或過大的候選區塊，確保每一個標記框皆為真實人臉。"
+            "並過濾異常的候選區塊，確保標記框皆為真實人臉。"
         )
 
         img_detected = img_bgr.copy()
@@ -307,101 +303,4 @@ if uploaded_file is not None:
             xml_name = "haarcascade_frontalface_default.xml"
             if not os.path.exists(xml_name):
               try:
-                url = f"https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/{xml_name}"
-                urllib.request.urlretrieve(url, xml_name)
-              except Exception:
-                pass
-
-            if os.path.exists(xml_name):
-              face_cascade = cv2.CascadeClassifier(xml_name)
-              gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-              detected = face_cascade.detectMultiScale(
-                  gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-              )
-              if len(detected) > 0:
-                for x, y, w, h in detected:
-                  # 嚴格過濾條件：寬度不得超過畫面 40%（排除跨多人的錯誤大框），且長寬比合理
-                  if w < width * 0.4 and 0.6 < (h / float(w)) < 1.8:
-                    faces.append((int(x), int(y), int(w), int(h)))
-        except Exception:
-          faces = []
-
-        cyan = (255, 255, 0)
-        audit_records = []
-
-        for idx, (x, y, w, h) in enumerate(faces, start=1):
-          cv2.rectangle(img_detected, (x, y), (x + w, y + h), cyan, 1)
-          cv2.drawMarker(
-              img_detected,
-              (x + w // 2, y + h // 2),
-              cyan,
-              markerType=cv2.MARKER_CROSS,
-              markerSize=15,
-              thickness=2,
-          )
-
-          d = int(w * 0.15)
-          for tx, ty in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]:
-            dx = -d if tx == x + w else d
-            dy = -d if ty == y + h else d
-            cv2.line(img_detected, (tx, ty), (tx + dx, ty), cyan, 4)
-            cv2.line(img_detected, (tx, ty), (tx, ty + dy), cyan, 4)
-
-          cv2.putText(
-              img_detected,
-              f"TARGET: FACE #{idx}",
-              (x, max(0, y - 25)),
-              cv2.FONT_HERSHEY_SIMPLEX,
-              0.5,
-              cyan,
-              1,
-              cv2.LINE_AA,
-          )
-          cv2.putText(
-              img_detected,
-              "SYS_LOCK: 100%",
-              (x, max(0, y - 8)),
-              cv2.FONT_HERSHEY_SIMPLEX,
-              0.5,
-              cyan,
-              1,
-              cv2.LINE_AA,
-          )
-
-          audit_records.append({
-              "Face ID": f"#{idx}",
-              "X 座標": x,
-              "Y 座標": y,
-              "寬度 (W)": w,
-              "高度 (H)": h,
-          })
-
-        img_detected_rgb = cv2.cvtColor(img_detected, cv2.COLOR_BGR2RGB)
-
-        col_res1, col_res2 = st.columns([1.3, 0.7])
-        with col_res1:
-          st.image(
-              img_detected_rgb,
-              caption=f"人臉偵測結果 (辨識總數: {len(faces)} 張)",
-              use_container_width=True,
-          )
-
-        with col_res2:
-          st.markdown("#### 📋 偵測結果摘要")
-          st.metric(label="偵測總人臉數", value=f"{len(faces)} 張")
-          st.markdown("---")
-
-          if len(faces) > 0:
-            st.success(f"成功精準鎖定 {len(faces)} 張人臉！")
-            st.dataframe(audit_records, use_container_width=True)
-          else:
-            st.warning("未偵測到符合條件的人臉。")
-
-    else:
-      st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
-
-  except Exception as e:
-    st.error(f"❌ 讀取過程發生異常錯誤: {e}")
-
-else:
-  st.info("👈 請由左側側邊欄上傳支援的點陣圖檔案（PNG, JPG, JPEG, BMP）以啟動系統。")
+                url = f
