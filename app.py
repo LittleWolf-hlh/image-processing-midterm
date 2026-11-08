@@ -1,8 +1,9 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 import io
+from scipy.ndimage import label, find_objects
 
 # 設定網頁版面配置
 st.set_page_config(
@@ -50,7 +51,7 @@ st.markdown(
     '<h1 style="white-space: nowrap; font-size: 2.2rem;">🖼️ 基於 AI 輔助之互動式影像處理與人臉分析工具開發</h1>', 
     unsafe_allow_html=True
 )
-st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與智慧人臉檢測（雲端高相容版本）")
+st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與動態視覺特徵偵測")
 
 if image_np is not None:
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -78,7 +79,7 @@ if image_np is not None:
             - **色彩維度**：{c} 頻道 (RGB)
             - **檔案大小**：{file_size_kb:.2f} KB
             """)
-            st.markdown("💡 **提示**：系統已成功載入並運行於雲端網頁環境。")
+            st.markdown("💡 **提示**：系統已成功載入並運行於雲端即時運算環境。")
 
     # ----------------------------------------------------
     # 核心二：多色彩空間與同步直方圖分析
@@ -195,7 +196,7 @@ if image_np is not None:
             if k_sum != 0:
                 kernel_to_apply = kernel_to_apply / k_sum
 
-        # 執行 3x3 卷積濾波 (使用 NumPy 向量化運算)
+        # 執行 3x3 卷積濾波
         img_float = image_np.astype(float)
         h, w, c = img_float.shape
         padded = np.pad(img_float, ((1, 1), (1, 1), (0, 0)), mode='edge')
@@ -208,10 +209,7 @@ if image_np is not None:
 
         # 計算 PSNR
         mse = np.mean((image_np.astype(float) - filtered_float) ** 2)
-        if mse == 0:
-            psnr_val = 100.0
-        else:
-            psnr_val = 20 * np.log10(255.0 / np.sqrt(mse))
+        psnr_val = 100.0 if mse == 0 else 20 * np.log10(255.0 / np.sqrt(mse))
 
         col_f1, col_f2 = st.columns(2)
         with col_f1:
@@ -222,47 +220,73 @@ if image_np is not None:
         st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
 
     # ----------------------------------------------------
-    # 核心四：智慧人臉自動偵測與統計
+    # 核心四：動態特徵與膚色區域偵測 (即時演算法)
     # ----------------------------------------------------
     with tab4:
-        st.subheader("🤖 智慧人臉自動偵測與統計稽核")
-        st.markdown("系統採用高門檻過濾機制，自動清除背景與衣服紋理等誤判雜訊。")
+        st.subheader("🤖 動態視覺特徵與區域偵測稽核")
+        st.markdown("系統採用 **YCbCr 色彩空間膚色分割與連通區域分析 (Blob Analysis)**，對上傳的圖片進行即時動態特徵擷取。")
 
-        # 雲端高相容人臉偵測與精準標記呈現
-        h_img, w_img, _ = image_np.shape
+        # 1. 轉換為 YCbCr 色彩空間進行即時膚色與特徵檢測
+        r = image_np[:, :, 0].astype(float)
+        g = image_np[:, :, 1].astype(float)
+        b = image_np[:, :, 2].astype(float)
+        
+        cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b
+        cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b
+        y_luma = 0.299 * r + 0.587 * g + 0.114 * b
+
+        # 2. 動態遮罩：過濾出符合膚色與明度特徵的候選區域
+        skin_mask = (cb >= 77) & (cb <= 127) & (cr >= 133) & (cr <= 173) & (y_luma > 50)
+
+        # 3. 連通區域標記與物件萃取 (Blob Detection)
+        labeled_array, num_features = label(skin_mask)
+        objects = find_objects(labeled_array)
+
+        faces = []
+        h_img, w_img = image_np.shape[:2]
+        min_size = max(20, int(w_img * 0.03))
+        max_size = int(w_img * 0.4)
+
+        for obj in objects:
+            if obj is not None:
+                slice_y, slice_x = obj
+                y_min, y_max = slice_y.start, slice_y.stop
+                x_min, x_max = slice_x.start, slice_x.stop
+                box_h = y_max - y_min
+                box_w = x_max - x_min
+                # 過濾雜訊，保留符合臉部比例的動態區塊
+                if min_size < box_h < max_size and min_size < box_w < max_size:
+                    aspect_ratio = box_w / box_h
+                    if 0.5 < aspect_ratio < 2.0:
+                        faces.append((x_min, y_min, box_w, box_h))
+
+        # 繪製動態偵測結果
         draw_img = image_pil.copy()
         draw = ImageDraw.Draw(draw_img)
 
-        # 模擬群體照片中精準定位的人臉座標（確保展示完美對齊）
-        faces = []
-        step_w, step_h = w_img // 4, h_img // 3
-        for r in range(1, 3):
-            for c in range(1, 5):
-                fx = int(c * step_w - step_w / 2 - 35)
-                fy = int(r * step_h - step_h / 2 - 35)
-                fw, fh = 70, 70
-                faces.append((fx, fy, fw, fh))
-
         for idx, (x, y, w_box, h_box) in enumerate(faces, start=1):
-            draw.rectangle([x, y, x + w_box, y + h_box], outline=(0, 255, 0), width=4)
-            draw.text((x, max(0, y - 20)), f"Face #{idx}", fill=(0, 255, 0))
+            draw.rectangle([x, y, x + w_box, y + h_box], outline=(0, 255, 0), width=3)
+            draw.text((x, max(0, y - 15)), f"Region #{idx}", fill=(0, 255, 0))
 
         col_d1, col_d2 = st.columns([1.2, 1])
         with col_d1:
-            st.image(draw_img, caption=f"人臉偵測結果 (精準識別 {len(faces)} 張人臉)", use_column_width=True)
+            st.image(draw_img, caption=f"動態特徵偵測結果 (即時識別 {len(faces)} 個特徵區域)", use_column_width=True)
         with col_d2:
-            st.markdown("#### 📋 偵測結果摘要")
-            st.success(f"成功精準識別並標記人臉！總計偵測數：**{len(faces)} 張**")
-            face_data = []
-            for idx, (x, y, w_box, h_box) in enumerate(faces, start=1):
-                face_data.append({
-                    "Face ID": f"#{idx}",
-                    "X 座標": x,
-                    "Y 座標": y,
-                    "寬度 (W)": w_box,
-                    "高度 (H)": h_box
-                })
-            st.table(face_data)
+            st.markdown("#### 📋 即時演算法偵測摘要")
+            if len(faces) > 0:
+                st.success(f"成功透過 YCbCr 演算法即時分割並標記特徵！總計偵測數：**{len(faces)} 個**")
+                face_data = []
+                for idx, (x, y, w_box, h_box) in enumerate(faces, start=1):
+                    face_data.append({
+                        "Region ID": f"#{idx}",
+                        "X 座標": x,
+                        "Y 座標": y,
+                        "寬度 (W)": w_box,
+                        "高度 (H)": h_box
+                    })
+                st.table(face_data)
+            else:
+                st.warning("未在畫面中檢測到符合門檻的特徵區塊，請嘗試更換對比清晰的測試照片。")
 
 else:
     st.warning("👈 請從左側側邊欄上傳圖片，以啟動系統四大核心互動模組！")
