@@ -202,67 +202,59 @@ if image is not None:
         st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
 
     # ----------------------------------------------------
-    # 核心四：基於多重候選與動態網格的智慧特徵偵測演算法
+    # 核心四：頭部精準切片與非極大值抑制演算法
     # ----------------------------------------------------
     with tab4:
         st.subheader("🤖 智慧人臉自動偵測與統計稽核")
-        st.markdown("系統採用 **動態網格分割與特徵點候選演算法**，即時解析畫面中的多人分布。")
+        st.markdown("系統採用 **YCrCb 膚色空間與頭部特徵精準切片演算法**，自動鎖定每個人臉位置而不延伸至身體。")
 
         h_img, w_img = image.shape[:2]
         faces = []
 
-        # 透過 YCrCb 膚色空間過濾候選像素
+        # 1. YCrCb 色彩空間膚色遮罩
         ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
         mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
+        # 2. 形態學雜訊過濾
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_morph)
+
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        candidates = []
+        raw_candidates = []
+        min_area = (w_img * h_img) * 0.0008
+        max_area = (w_img * h_img) * 0.35
+
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            # 放寬面積限制以適應合照中較小的人臉
-            if (w_img * h_img) * 0.0008 < area < (w_img * h_img) * 0.25:
+            if min_area < area < max_area:
                 x, y, w, h = cv2.boundingRect(cnt)
                 aspect_ratio = h / float(w)
-                # 篩選符合頭部比例的區塊
-                if 0.6 <= aspect_ratio <= 2.5:
-                    candidates.append((x, y, w, h))
+                if 0.5 < aspect_ratio < 3.5:
+                    # 關鍵優化：將檢測到的區塊嚴格轉換為獨立的「頭部/臉部」比例方框（鎖定在頂端）
+                    face_w = w
+                    face_h = int(w * 1.1)  # 保持標準臉部比例
+                    face_x = x
+                    face_y = y             # 從頂端開始，絕不延伸到胸口
+                    raw_candidates.append((face_x, face_y, face_w, face_h))
 
-        # 若偵測到多個候選區塊，進行群聚過濾避免重複框選
-        if len(candidates) > 0:
-            # 依據面積與位置排序並去除過度重疊的雜訊框
-            candidates = sorted(candidates, key=lambda b: b[2] * b[3], reverse=True)
-            for box in candidates:
-                x, y, w, h = box
-                # 確保不與已收錄的方框高度重疊
-                overlap = False
-                for fx, fy, fw, fh in faces:
-                    if abs(x - fx) < fw * 0.6 and abs(y - fy) < fh * 0.6:
-                        overlap = True
-                        break
-                if not overlap:
-                    faces.append(box)
-                    if len(faces) >= 20:  # 最多限制 20 個人頭
-                        break
-
-        # 如果人數較多或合照較密集，自動切換至優化的網格群體特徵掃描
-        if len(faces) < 3 and w_img > 600:
-            faces = []
-            # 動態依據影像寬高切分網格以捕捉群體
-            grid_cols = 4 if w_img > 1000 else 3
-            grid_rows = 4
-            cell_w = w_img / grid_cols
-            cell_h = h_img / grid_rows
-            
-            for r in range(grid_rows):
-                for c in range(grid_cols):
-                    fx = int(c * cell_w + cell_w * 0.15)
-                    fy = int(r * cell_h + cell_h * 0.1)
-                    fw = int(cell_w * 0.7)
-                    fh = int(cell_h * 0.75)
-                    faces.append((fx, fy, fw, fh))
+        # 3. 非極大值抑制（NMS）與距離過濾：確保每張臉只有一個精準框
+        raw_candidates = sorted(raw_candidates, key=lambda b: b[2] * b[3], reverse=True)
+        for box in raw_candidates:
+            x, y, w, h = box
+            overlap = False
+            for fx, fy, fw, fh in faces:
+                if abs(x - fx) < fw * 0.5 and abs(y - fy) < fh * 0.5:
+                    overlap = True
+                    break
+            if not overlap and 0 <= x < w_img and 0 <= y < h_img:
+                # 確保邊界不超出圖片
+                final_w = min(w, w_img - x)
+                final_h = min(h, h_img - y)
+                faces.append((x, y, final_w, final_h))
 
         detected_img = image.copy()
         for idx, (x, y, w, h) in enumerate(faces, start=1):
@@ -275,7 +267,7 @@ if image is not None:
         with col_d2:
             st.markdown("#### 📋 偵測結果摘要")
             if len(faces) > 0:
-                st.success(f"成功即時辨識多人分佈！總計偵測數：**{len(faces)} 張**")
+                st.success(f"成功即時辨識並精準框選人臉！總計偵測數：**{len(faces)} 張**")
                 face_data = []
                 for idx, (x, y, w, h) in enumerate(faces, start=1):
                     face_data.append({
