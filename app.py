@@ -1,6 +1,7 @@
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 import streamlit as st
 
 # 頁面基本配置
@@ -248,7 +249,7 @@ if uploaded_file is not None:
           r2c0 = st.number_input("K[2,0]", step=1.0, key="m_20")
         with k_col2:
           r0c1 = st.number_input("K[0,1]", step=1.0, key="m_01")
-          r1c1 = st.number_input("K[1,1]", step=1.0, key="m_11")
+          r1c1 = st.number_input("K[1,1]", step=1.1, key="m_11")
           r2c1 = st.number_input("K[2,1]", step=1.0, key="m_21")
         with k_col3:
           r0c2 = st.number_input("K[0,2]", step=1.0, key="m_02")
@@ -287,69 +288,32 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (動態適應單人/多人不固定人數) ---
+      # --- Tab 4: 智慧人臉偵測模組 (直接讀取本地 XML 檔案) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用多尺度動態網格與膚色特徵過濾演算法，無論單人特寫或多人合照均能自動適應並精準框選。"
+            "系統直接載入專案根目錄的 Haar Cascade 模型，支援任意人數，精準識別與標記人臉。"
         )
 
         img_detected = img_bgr.copy()
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        gray_eq = cv2.equalizeHist(gray)
 
-        # 1. 轉換至 YCrCb 色彩空間進行膚色遮罩
-        ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
-        lower_skin = np.array([0, 133, 77], dtype=np.uint8)
-        upper_skin = np.array([255, 173, 127], dtype=np.uint8)
-        mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
-
-        # 2. 形態學清理雜訊
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_morph)
-
-        contours, _ = cv2.findContours(
-            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        candidates = []
-        # 動態判定：根據圖片解析度自動調整面積區間，同時相容單人大臉與合照小臉
-        min_area = (width * height) * 0.0005
-        max_area = (width * height) * 0.45
-
-        for cnt in contours:
-          area = cv2.contourArea(cnt)
-          if min_area < area < max_area:
-            x, y, w, h = cv2.boundingRect(cnt)
-            aspect_ratio = h / float(w)
-            # 限制長寬比例符合頭部結構，並排除邊緣雜訊（如靠窗或兩側背景）
-            if (
-                0.6 <= aspect_ratio <= 2.5
-                and x > width * 0.02
-                and x + w < width * 0.98
-            ):
-              candidates.append((x, y, w, h))
-
-        # 3. 非極大值抑制與重疊過濾 (NMS)
-        candidates = sorted(candidates, key=lambda b: b[2] * b[3], reverse=True)
+        # 直接讀取專案中上傳的本地 XML 檔案
+        cascade_filename = "haarcascade_frontalface_default.xml"
         faces = []
-        for box in candidates:
-          x, y, w, h = box
-          overlap = False
-          for fx, fy, fw, fh in faces:
-            # 距離過近或高度重疊視為同一張臉
-            if abs(x - fx) < fw * 0.5 and abs(y - fy) < fh * 0.5:
-              overlap = True
-              break
-          if not overlap:
-            faces.append((x, y, w, h))
 
-        # 4. 安全保險：如果畫面極為單純且未抓到多人，則自動完美鎖定中央主體
-        if len(faces) == 0:
-          fw = int(width * 0.28)
-          fh = int(fw * 1.3)
-          fx = int((width - fw) / 2)
-          fy = int((height - fh) / 2.2)
-          faces = [(fx, fy, fw, fh)]
+        if os.path.exists(cascade_filename):
+          face_cascade = cv2.CascadeClassifier(cascade_filename)
+          if not face_cascade.empty():
+            faces = face_cascade.detectMultiScale(
+                gray_eq, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+            )
+        else:
+          st.error(
+              f"⚠️ 找不到模型檔案 `{cascade_filename}`，請確認該檔案已上傳至"
+              " GitHub 專案根目錄！"
+          )
 
         face_count = len(faces)
         audit_records = []
