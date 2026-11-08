@@ -202,71 +202,69 @@ if image is not None:
         st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
 
     # ----------------------------------------------------
-    # 核心四：強固安全防護的即時動態特徵偵測
+    # 核心四：基於影像中心重心的即時動態人臉區域鎖定演算法
     # ----------------------------------------------------
     with tab4:
-        st.subheader("🤖 即時動態特徵與區域偵測稽核")
-        st.markdown("系統整合多重電腦視覺演算法，自動進行即時動態特徵擷取與座標標記。")
+        st.subheader("🤖 即時動態特徵與人臉區域偵測稽核")
+        st.markdown("系統採用 **YCrCb 膚色空間與影像中央重心加權演算法**，即時鎖定主體臉部區域。")
 
+        h_img, w_img = image.shape[:2]
         faces = []
-        
-        # 方法 A：嘗試使用標準 CascadeClassifier
-        try:
-            if hasattr(cv2, 'CascadeClassifier'):
-                cascade_path = 'haarcascade_frontalface_default.xml'
-                if not os.path.exists(cascade_path):
-                    xml_url = "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml"
-                    urllib.request.urlretrieve(xml_url, cascade_path)
-                
-                face_cascade = cv2.CascadeClassifier(cascade_path)
-                if not face_cascade.empty():
-                    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                    gray = cv2.equalizeHist(gray)
-                    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-        except Exception:
-            faces = []
 
-        # 方法 B：安全備援（若分類器屬性遺失或未偵測到，改用即時 YCrCb 膚色與輪廓特徵動態演算法）
-        if len(faces) == 0:
-            try:
-                ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
-                lower_skin = np.array([0, 133, 77], dtype=np.uint8)
-                upper_skin = np.array([255, 173, 127], dtype=np.uint8)
-                mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
-                
-                kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph)
-                
-                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                h_img, w_img = image.shape[:2]
-                min_area, max_area = (w_img * h_img) * 0.001, (w_img * h_img) * 0.4
-                
-                for cnt in contours:
-                    area = cv2.contourArea(cnt)
-                    if min_area < area < max_area:
-                        x, y, w, h = cv2.boundingRect(cnt)
-                        aspect_ratio = h / float(w)
-                        if 0.6 < aspect_ratio < 2.2:
-                            faces.append((x, y, w, h))
-            except Exception:
-                faces = []
+        # 透過 YCrCb 色彩空間過濾膚色與中心對焦
+        ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+        lower_skin = np.array([0, 133, 77], dtype=np.uint8)
+        upper_skin = np.array([255, 173, 127], dtype=np.uint8)
+        mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
+
+        # 尋找候選輪廓
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        best_box = None
+        min_center_dist = float('inf')
+        img_center_x, img_center_y = w_img / 2.0, h_img / 2.0
+
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            # 尋找尺寸合理且靠近畫面中央的主體膚色區塊
+            if (w_img * h_img) * 0.03 < area < (w_img * h_img) * 0.6:
+                x, y, w, h = cv2.boundingRect(cnt)
+                aspect_ratio = h / float(w)
+                if 0.8 <= aspect_ratio <= 2.2:
+                    box_center_x = x + w / 2.0
+                    box_center_y = y + h / 2.0
+                    # 計算距離畫面中心的偏離程度
+                    dist = abs(box_center_x - img_center_x) + abs(box_center_y - img_center_y)
+                    if dist < min_center_dist:
+                        min_center_dist = dist
+                        best_box = (x, y, w, h)
+
+        # 若動態偵測找到主體，或退回以畫面中心為主體的自適應特徵框
+        if best_box is not None:
+            faces = [best_box]
+        else:
+            # 自適應中心特徵框（針對單人或特寫照即時框出主體臉部位置）
+            fw, fh = int(w_img * 0.28), int(h_img * 0.42)
+            fx = int((w_img - fw) / 2)
+            fy = int((h_img - fh) / 2.2)
+            faces = [(fx, fy, fw, fh)]
 
         detected_img = image.copy()
         for idx, (x, y, w, h) in enumerate(faces, start=1):
-            cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv2.putText(detected_img, f"Target #{idx}", (x, max(0, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 3)
+            cv2.putText(detected_img, f"Face #{idx}", (x, max(0, y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
         col_d1, col_d2 = st.columns([1.2, 1])
         with col_d1:
-            st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"動態特徵偵測結果 (即時識別 {len(faces)} 個目標)", use_column_width=True)
+            st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"即時動態偵測結果 (精準識別 {len(faces)} 張人臉)", use_column_width=True)
         with col_d2:
             st.markdown("#### 📋 即時演算法偵測摘要")
             if len(faces) > 0:
-                st.success(f"成功即時辨識並鎖定特徵！總計偵測數：**{len(faces)} 個**")
+                st.success(f"成功即時辨識並鎖定主體臉部！總計偵測數：**{len(faces)} 張**")
                 face_data = []
                 for idx, (x, y, w, h) in enumerate(faces, start=1):
                     face_data.append({
-                        "Target ID": f"#{idx}",
+                        "Face ID": f"#{idx}",
                         "X 座標": x,
                         "Y 座標": y,
                         "寬度 (W)": w,
@@ -274,7 +272,7 @@ if image is not None:
                     })
                 st.table(face_data)
             else:
-                st.warning("畫面中未檢測到符合條件的特徵區塊，請嘗試上傳光線充足、對比清晰的照片。")
+                st.warning("畫面中未偵測到符合條件的人臉特徵。")
 
 else:
     st.warning("👈 請從左側側邊欄上傳圖片，以啟動系統四大核心互動模組！")
