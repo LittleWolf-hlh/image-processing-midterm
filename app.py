@@ -290,24 +290,24 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (支援多主體與群體檢測) ---
+      # --- Tab 4: 智慧人臉偵測模組 (全景多重目標無上限捕捉) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用多重輪廓過濾與非極大值抑制，支援**單人或多人合照**的自主檢測，"
-            "並結合科幻 HUD 瞄準介面。"
+            "系統採用全景多重輪廓掃描，將畫面中所有符合膚色與幾何特徵的候選目標"
+            "**全部獨立框選**，並套用科幻 HUD 瞄準介面。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 透過 YCrCb 膚色空間遮罩
+        # 透過 YCrCb 膚色色彩空間遮罩
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
         mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         mask = cv2.morphologyEx(
             mask, cv2.MORPH_OPEN, kernel_morph, iterations=1
         )
@@ -318,37 +318,28 @@ if uploaded_file is not None:
         contours, _ = cv2.findContours(
             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
-        candidates = []
 
+        # 收集所有符合基本大小與比例的輪廓，有多少收多少！
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 允許彈性調整大小範圍，以捕捉畫面中不同遠近的多張人臉
-          if (width * height) * 0.005 < area < (width * height) * 0.4:
+          # 放寬面積範圍，確保大小不同的臉孔都能被捕捉
+          if (width * height) * 0.001 < area < (width * height) * 0.5:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 寬高比例限制，確保抓到的是臉部輪廓
-            if 0.7 < aspect_ratio < 2.2:
-              candidates.append((area, (x, y, w, h)))
+            if 0.5 < aspect_ratio < 2.5:
+              # 只要不完全跟現有框重疊，直接加入列表
+              overlap = False
+              for fx, fy, fw, fh in faces:
+                if (
+                    abs((x + w / 2) - (fx + fw / 2)) < max(fw, w) * 0.4
+                    and abs((y + h / 2) - (fy + fh / 2)) < max(fh, h) * 0.4
+                ):
+                  overlap = True
+                  break
+              if not overlap:
+                faces.append((x, y, w, h))
 
-        # 依面積由大到小排序候選區塊
-        candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
-
-        # 過濾重疊框（Non-Maximum Suppression 概念），確保多個人頭能各自獨立被框選
-        for _, box in candidates:
-          x, y, w, h = box
-          overlap = False
-          for fx, fy, fw, fh in faces:
-            # 計算重疊度，若距離過近則視為同一個主體不重複框選
-            if (
-                abs((x + w / 2) - (fx + fw / 2)) < max(fw, w) * 0.6
-                and abs((y + h / 2) - (fy + fh / 2)) < max(fh, h) * 0.6
-            ):
-              overlap = True
-              break
-          if not overlap:
-            faces.append((x, y, w, h))
-
-        # 若未偵測到任何區塊，自動回退預設中央位置
+        # 若真的很乾淨完全找不到輪廓，提供一個保底預設框
         if len(faces) == 0:
           fw = int(width * 0.25)
           fh = int(fw * 1.35)
@@ -412,20 +403,20 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (動態識別 {len(faces)} 張人臉)",
+              caption=f"人臉偵測結果 (全景多重識別 {len(faces)} 個目標)",
               use_container_width=True,
           )
 
         with col_res2:
           st.markdown("#### 📋 偵測結果摘要")
-          st.metric(label="偵測總人臉數", value=f"{len(faces)} 張")
+          st.metric(label="偵測總目標數", value=f"{len(faces)} 個")
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功識別並標記 {len(faces)} 個主體！")
+            st.success(f"成功全面掃描並標記 {len(faces)} 個目標！")
             st.dataframe(audit_records, use_container_width=True)
           else:
-            st.warning("未偵測到人臉。")
+            st.warning("未偵測到目標。")
 
     else:
       st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
