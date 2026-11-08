@@ -1,284 +1,396 @@
-import streamlit as st
 import cv2
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+import streamlit as st
 
-# 設定網頁版面配置
+# 頁面基本配置
 st.set_page_config(
-    page_title="AI 輔助影像處理與人臉分析系統",
+    page_title="AI 輔助影像處理與人臉分析工具",
     page_icon="🖼️",
-    layout="wide"
+    layout="wide",
 )
 
-# 初始化 Session State 以確保 3x3 矩陣與範本雙向連動
-if "kernel" not in st.session_state:
-    st.session_state.kernel = np.array([[0.0, 0.0, 0.0],
-                                        [0.0, 1.0, 0.0],
-                                        [0.0, 0.0, 0.0]], dtype=float)
+st.title("🖼️ AI 輔助影像處理與人臉分析系統")
+st.write(
+    "期中專題實作介面 —— 整合色彩空間分析、手動卷積濾波與智慧人臉檢測"
+)
 
-# 快速濾波範本定義
-PRESETS = {
-    "原始 (Identity)": np.array([[0, 0, 0], [0, 1, 0], [0, 0, 0]], dtype=float),
-    "高斯平滑 (Gaussian Blur)": np.array([[1, 2, 1], [2, 4, 2], [1, 2, 1]], dtype=float) / 16.0,
-    "銳化 (Sharpen)": np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=float),
-    "邊緣檢測 (Edge Detection)": np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]], dtype=float),
-    "盒狀模糊 (Box Blur)": np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]], dtype=float) / 9.0
-}
-
-def on_preset_change():
-    selected = st.session_state.preset_selector
-    if selected in PRESETS:
-        st.session_state.kernel = PRESETS[selected].copy()
-
-# 側邊欄：檔案上傳層
+# -------------------------------------------------------------
+# 核心一：影像載入與基礎解析
+# -------------------------------------------------------------
 st.sidebar.header("📁 影像檔案上傳")
-uploaded_file = st.sidebar.file_uploader("請上傳測試影像 (PNG, JPG, JPEG, BMP)", type=["png", "jpg", "jpeg", "bmp"])
+uploaded_file = st.sidebar.file_uploader(
+    "請上傳測試影像", type=["png", "jpg", "jpeg", "bmp"]
+)
 
 if uploaded_file is not None:
+  try:
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    img_name = uploaded_file.name
-else:
-    image = None
-    img_name = "未上傳圖片"
+    img_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-# 主標題 (強制不換行對齊處理)
-st.markdown(
-    '<h1 style="white-space: nowrap; font-size: 2.2rem;">🖼️ 基於 AI 輔助之互動式影像處理與人臉分析工具開發</h1>', 
-    unsafe_allow_html=True
-)
-st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與智慧人臉檢測")
+    if img_bgr is not None:
+      img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+      height, width, channels = img_bgr.shape
+      file_size_kb = uploaded_file.size / 1024
 
-if image is not None:
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "1. 原始與中繼資訊", 
-        "2. 色彩空間與直方圖", 
-        "3. 卷積濾波與 PSNR", 
-        "4. 智慧人臉偵測"
-    ])
+      st.sidebar.markdown("---")
+      st.sidebar.subheader("📊 影像中繼資訊 (Metadata)")
+      st.sidebar.write(f"- **檔案名稱**: {uploaded_file.name}")
+      st.sidebar.write(f"- **解析度**: {width} × {height} 像素")
+      st.sidebar.write(f"- **色彩維度**: {channels} 頻道 (RGB)")
+      st.sidebar.write(f"- **檔案大小**: {file_size_kb:.2f} KB")
 
-    # ----------------------------------------------------
-    # 核心一：影像載入與中繼資訊
-    # ----------------------------------------------------
-    with tab1:
-        st.subheader("📌 原始影像即時預覽與中繼資訊 (Metadata)")
-        col1, col2 = st.columns([1.2, 1])
-        with col1:
-            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            st.image(image_rgb, caption=f"Original Image: {img_name}", use_column_width=True)
-        with col2:
-            h, w, c = image.shape
-            file_size_kb = len(file_bytes) / 1024 if uploaded_file else 0
-            st.markdown("#### 📊 影像屬性摘要")
-            st.info(f"""
-            - **檔案名稱**：{img_name}
-            - **解析度**：{w} × {h} 像素
-            - **色彩維度**：{c} 頻道 (RGB)
-            - **檔案大小**：{file_size_kb:.2f} KB
-            """)
-            st.markdown("💡 **提示**：系統已成功載入並運行於雲端即時運算環境。")
+      # 建立四大核心分頁
+      tab1, tab2, tab3, tab4 = st.tabs([
+          "1. 原始與中繼",
+          "2. 色彩空間與直方圖",
+          "3. 卷積濾波與 PSNR",
+          "4. 智慧人臉偵測",
+      ])
 
-    # ----------------------------------------------------
-    # 核心二：多色彩空間與同步直方圖分析
-    # ----------------------------------------------------
-    with tab2:
-        st.subheader("🎨 多色彩空間轉換與同步直方圖分析")
-        color_mode = st.radio("選擇檢視模式：", ["RGB 三通道綜覽", "單通道顏色分離", "YUV 色彩空間解析"], horizontal=True)
+      # --- Tab 1: 原始影像與預覽 ---
+      with tab1:
+        st.subheader("原始影像即時預覽")
+        st.image(
+            img_rgb,
+            caption=f"Original Image: {uploaded_file.name}",
+            channels="RGB",
+            use_container_width=True,
+        )
+        st.info("💡 提示：您可以透過左側選單隨時更換不同照片。")
 
-        col_img, col_hist = st.columns(2)
-
-        if color_mode == "RGB 三通道綜覽":
-            with col_img:
-                st.image(image_rgb, caption="RGB 原圖", use_column_width=True)
-            with col_hist:
-                fig, ax = plt.subplots(figsize=(6, 3.5))
-                colors = ('r', 'g', 'b')
-                for i, col in enumerate(colors):
-                    hist = cv2.calcHist([image], [i], None, [256], [0, 256])
-                    ax.plot(hist, color=col, label=f"{col.upper()} 通道")
-                ax.set_title("RGB 三通道像素強度分布直方圖")
-                ax.set_xlabel("Pixel Intensity (0-255)")
-                ax.set_ylabel("Count")
-                ax.legend()
-                ax.grid(True, linestyle="--", alpha=0.5)
-                st.pyplot(fig)
-
-        elif color_mode == "單通道顏色分離":
-            channel_choice = st.selectbox("選擇要隔離的色彩通道：", ["紅色通道 (R)", "綠色通道 (G)", "藍色通道 (B)"])
-            zeros = np.zeros_like(image[:, :, 0])
-            if channel_choice == "紅色通道 (R)":
-                isolated = cv2.merge([zeros, zeros, image[:, :, 2]])
-                ch_idx, ch_name, plot_color = 2, "Red", 'r'
-            elif channel_choice == "綠色通道 (G)":
-                isolated = cv2.merge([zeros, image[:, :, 1], zeros])
-                ch_idx, ch_name, plot_color = 1, "Green", 'g'
-            else:
-                isolated = cv2.merge([image[:, :, 0], zeros, zeros])
-                ch_idx, ch_name, plot_color = 0, "Blue", 'b'
-
-            with col_img:
-                st.image(cv2.cvtColor(isolated, cv2.COLOR_BGR2RGB), caption=f"{channel_choice} 隔離影像", use_column_width=True)
-            with col_hist:
-                fig, ax = plt.subplots(figsize=(6, 3.5))
-                hist = cv2.calcHist([image], [ch_idx], None, [256], [0, 256])
-                ax.fill_between(range(256), hist.flatten(), color=plot_color, alpha=0.3)
-                ax.plot(hist, color=plot_color)
-                ax.set_title(f"{ch_name} Channel Histogram")
-                ax.set_xlabel("Pixel Intensity (0-255)")
-                ax.set_ylabel("Count")
-                ax.grid(True, linestyle="--", alpha=0.5)
-                st.pyplot(fig)
-
-        else:  # YUV 色彩空間解析
-            yuv_img = cv2.cvtColor(image, cv2.COLOR_BGR2YUV)
-            y, u, v = cv2.split(yuv_img)
-            yuv_channel = st.selectbox("選擇 YUV 分量模式：", ["Y (亮度分量)", "U (色度分量)", "V (色度分量)"])
-            
-            if yuv_channel.startswith("Y"):
-                target_chan, title_str = y, "Y Channel (Brightness)"
-            elif yuv_channel.startswith("U"):
-                target_chan, title_str = u, "U Channel (Chrominance)"
-            else:
-                target_chan, title_str = v, "V Channel (Chrominance)"
-
-            with col_img:
-                st.image(target_chan, caption=yuv_channel, use_column_width=True, clamp=True)
-            with col_hist:
-                fig, ax = plt.subplots(figsize=(6, 3.5))
-                hist = cv2.calcHist([target_chan], [0], None, [256], [0, 256])
-                ax.fill_between(range(256), hist.flatten(), color='gray', alpha=0.4)
-                ax.plot(hist, color='black')
-                ax.set_title(title_str)
-                ax.set_xlabel("Pixel Intensity (0-255)")
-                ax.set_ylabel("Count")
-                ax.grid(True, linestyle="--", alpha=0.5)
-                st.pyplot(fig)
-
-    # ----------------------------------------------------
-    # 核心三：自訂卷積核矩陣與 PSNR 評估
-    # ----------------------------------------------------
-    with tab3:
-        st.subheader("⚙️ 3×3 卷積核矩陣自訂與 PSNR 品質評估")
-        
-        st.selectbox(
-            "快速濾波範本 (選擇後將即時連通下方 9 個輸入框)：",
-            list(PRESETS.keys()),
-            key="preset_selector",
-            on_change=on_preset_change
+      # --- Tab 2: 多色彩空間轉換與同步直方圖分析 ---
+      with tab2:
+        st.subheader("🎨 核心二：多色彩空間與同步直方圖分析")
+        st.write(
+            "系統自動將影像轉換至不同色彩空間與通道，並同步繪製對應的像素強度直方圖。"
         )
 
-        st.markdown("#### 🔢 3×3 卷積核矩陣手動編輯器")
-        k_cols = st.columns(3)
-        for i in range(3):
-            for j in range(3):
-                with k_cols[j]:
-                    st.session_state.kernel[i, j] = st.number_input(
-                        f"K[{i},{j}]",
-                        value=float(st.session_state.kernel[i, j]),
-                        step=0.1,
-                        format="%.2f",
-                        key=f"k_{i}_{j}"
-                    )
+        sub_tab1, sub_tab2, sub_tab3 = st.tabs(
+            ["RGB 三通道檢視", "單通道顏色分離", "YUV 色彩空間"]
+        )
 
-        auto_norm = st.checkbox("啟用自動正規化 (Normalization，避免影像過曝)", value=True)
+        def plot_histogram(img_channel, title, color):
+          fig, ax = plt.subplots(figsize=(6, 2.8))
+          hist = cv2.calcHist([img_channel], [0], None, [256], [0, 256])
+          ax.plot(hist, color=color, linewidth=1.5)
+          ax.fill_between(
+              range(256), hist.flatten(), color=color, alpha=0.2
+          )
+          ax.set_title(title, fontsize=11)
+          ax.set_xlabel("Pixel Intensity (0-255)", fontsize=9)
+          ax.set_ylabel("Count", fontsize=9)
+          ax.set_xlim([0, 256])
+          ax.grid(True, linestyle="--", alpha=0.4)
+          st.pyplot(fig)
+          plt.close(fig)
 
-        kernel_to_apply = st.session_state.kernel.copy()
-        if auto_norm:
-            k_sum = np.sum(kernel_to_apply)
-            if k_sum != 0:
-                kernel_to_apply = kernel_to_apply / k_sum
+        with sub_tab1:
+          col1, col2 = st.columns(2)
+          with col1:
+            st.image(img_rgb, caption="RGB 原圖", use_container_width=True)
+          with col2:
+            st.markdown("#### RGB 三通道強度分布")
+            fig, ax = plt.subplots(figsize=(6, 2.8))
+            colors = ("red", "green", "blue")
+            for i, col in enumerate(colors):
+              hist = cv2.calcHist([img_rgb], [i], None, [256], [0, 256])
+              ax.plot(hist, color=col, label=f"{col.upper()} 頻道")
+            ax.set_xlim([0, 256])
+            ax.set_xlabel("Pixel Intensity (0-255)")
+            ax.set_ylabel("Count")
+            ax.legend(loc="upper right")
+            ax.grid(True, linestyle="--", alpha=0.4)
+            st.pyplot(fig)
+            plt.close(fig)
 
-        filtered_img = cv2.filter2D(image, -1, kernel_to_apply)
-        psnr_val = cv2.PSNR(image, filtered_img)
+        with sub_tab2:
+          channel_choice = st.selectbox(
+              "選擇要隔離的色彩通道",
+              ["紅色通道 (R)", "綠色通道 (G)", "藍色通道 (B)"],
+              key="ch_select",
+          )
+          idx = 0
+          c_name, c_color = "Red", "red"
+          if channel_choice == "綠色通道 (G)":
+            idx, c_name, c_color = 1, "Green", "green"
+          elif channel_choice == "藍色通道 (B)":
+            idx, c_name, c_color = 2, "Blue", "blue"
+
+          single_channel = np.zeros_like(img_rgb)
+          single_channel[:, :, idx] = img_rgb[:, :, idx]
+
+          col1, col2 = st.columns(2)
+          with col1:
+            st.image(
+                single_channel,
+                caption=f"{channel_choice} 隔離影像",
+                use_container_width=True,
+            )
+          with col2:
+            st.markdown(f"#### {c_name} 通道直方圖")
+            plot_histogram(
+                img_rgb[:, :, idx], f"{c_name} Channel Histogram", c_color
+            )
+
+        with sub_tab3:
+          img_yuv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YUV)
+          y_ch, u_ch, v_ch = cv2.split(img_yuv)
+
+          yuv_choice = st.radio(
+              "選擇 YUV 分量模式",
+              ["Y (亮度)", "U (色度)", "V (色度)"],
+              horizontal=True,
+              key="yuv_radio",
+          )
+
+          col1, col2 = st.columns(2)
+          if yuv_choice == "Y (亮度)":
+            with col1:
+              st.image(
+                  y_ch,
+                  caption="Y 亮度分量",
+                  use_container_width=True,
+                  clamp=True,
+              )
+            with col2:
+              st.markdown("#### Y 分量直方圖")
+              plot_histogram(y_ch, "Y Channel Histogram", "gray")
+          elif yuv_choice == "U (色度)":
+            with col1:
+              st.image(
+                  u_ch,
+                  caption="U 色度分量",
+                  use_container_width=True,
+                  clamp=True,
+              )
+            with col2:
+              st.markdown("#### U 分量直方圖")
+              plot_histogram(u_ch, "U Channel Histogram", "blue")
+          else:
+            with col1:
+              st.image(
+                  v_ch,
+                  caption="V 色度分量",
+                  use_container_width=True,
+                  clamp=True,
+              )
+            with col2:
+              st.markdown("#### V 分量直方圖")
+              plot_histogram(v_ch, "V Channel Histogram", "red")
+
+      # --- Tab 3: 核心三 - 完美連動的手動矩陣與 PSNR 評估 ---
+      with tab3:
+        st.subheader("⚙️ 核心三：自訂卷積核矩陣與 PSNR 評估")
+        st.write(
+            "提供 3×3 卷積核矩陣的編輯功能。切換上方範本時將自動連動更新下方矩陣數值，"
+            "您也可以隨時手動微調，系統將即時計算 PSNR。"
+        )
+
+        if "m_00" not in st.session_state:
+          st.session_state.m_00 = 0.0
+          st.session_state.m_01 = 0.0
+          st.session_state.m_02 = 0.0
+          st.session_state.m_10 = 0.0
+          st.session_state.m_11 = 1.0
+          st.session_state.m_12 = 0.0
+          st.session_state.m_20 = 0.0
+          st.session_state.m_21 = 0.0
+          st.session_state.m_22 = 0.0
+          st.session_state.norm_chk = False
+
+        def on_preset_change():
+          preset = st.session_state.k_preset
+          if preset == "高斯平滑 (Gaussian Blur)":
+            vals = [[1.0, 2.0, 1.0], [2.0, 4.0, 2.0], [1.0, 2.0, 1.0]]
+            st.session_state.norm_chk = True
+          elif preset == "拉普拉斯銳化 (Sharpen)":
+            vals = [[0.0, -1.0, 0.0], [-1.0, 5.0, -1.0], [0.0, -1.0, 0.0]]
+            st.session_state.norm_chk = False
+          elif preset == "邊緣檢測 (Edge Detection)":
+            vals = [[-1.0, -1.0, -1.0], [-1.0, 8.0, -1.0], [-1.0, -1.0, -1.0]]
+            st.session_state.norm_chk = False
+          elif preset == "盒狀模糊 (Box Blur)":
+            vals = [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]]
+            st.session_state.norm_chk = True
+          else:
+            vals = [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]
+            st.session_state.norm_chk = False
+
+          st.session_state.m_00 = vals[0][0]
+          st.session_state.m_01 = vals[0][1]
+          st.session_state.m_02 = vals[0][2]
+          st.session_state.m_10 = vals[1][0]
+          st.session_state.m_11 = vals[1][1]
+          st.session_state.m_12 = vals[1][2]
+          st.session_state.m_20 = vals[2][0]
+          st.session_state.m_21 = vals[2][1]
+          st.session_state.m_22 = vals[2][2]
+
+        st.selectbox(
+            "快速濾波範本 (選擇後將即時連動下方 9 個輸入框)",
+            [
+                "手動自訂矩陣",
+                "高斯平滑 (Gaussian Blur)",
+                "拉普拉斯銳化 (Sharpen)",
+                "邊緣檢測 (Edge Detection)",
+                "盒狀模糊 (Box Blur)",
+            ],
+            key="k_preset",
+            on_change=on_preset_change,
+        )
+
+        st.markdown("#### 🛠️ 3×3 卷積核矩陣手動編輯器")
+        k_col1, k_col2, k_col3 = st.columns(3)
+        with k_col1:
+          r0c0 = st.number_input("K[0,0]", step=1.0, key="m_00")
+          r1c0 = st.number_input("K[1,0]", step=1.0, key="m_10")
+          r2c0 = st.number_input("K[2,0]", step=1.0, key="m_20")
+        with k_col2:
+          r0c1 = st.number_input("K[0,1]", step=1.0, key="m_01")
+          r1c1 = st.number_input("K[1,1]", step=1.0, key="m_11")
+          r2c1 = st.number_input("K[2,1]", step=1.0, key="m_21")
+        with k_col3:
+          r0c2 = st.number_input("K[0,2]", step=1.0, key="m_02")
+          r1c2 = st.number_input("K[1,2]", step=1.0, key="m_12")
+          r2c2 = st.number_input("K[2,2]", step=1.0, key="m_22")
+
+        kernel_matrix = np.array(
+            [[r0c0, r0c1, r0c2], [r1c0, r1c1, r1c2], [r2c0, r2c1, r2c2]],
+            dtype=np.float32,
+        )
+
+        normalize_flag = st.checkbox(
+            "啟用自動正規化 (Normalization)", key="norm_chk"
+        )
+
+        if normalize_flag:
+          k_sum = np.sum(kernel_matrix)
+          if k_sum != 0:
+            kernel_matrix = kernel_matrix / k_sum
+
+        filtered_bgr = cv2.filter2D(img_bgr, -1, kernel_matrix)
+        filtered_rgb = cv2.cvtColor(filtered_bgr, cv2.COLOR_BGR2RGB)
+        psnr_value = cv2.PSNR(img_bgr, filtered_bgr)
 
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            st.image(image_rgb, caption="原始影像", use_column_width=True)
+          st.image(img_rgb, caption="原始影像", use_container_width=True)
         with col_f2:
-            st.image(cv2.cvtColor(filtered_img, cv2.COLOR_BGR2RGB), caption=f"濾波處理後影像 (PSNR: {psnr_val:.2f} dB)", use_column_width=True)
+          st.image(
+              filtered_rgb, caption="濾波處理後影像", use_container_width=True
+          )
 
-        st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
+        st.markdown("---")
+        st.metric(
+            label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)",
+            value=f"{psnr_value:.2f} dB",
+        )
 
-    # ----------------------------------------------------
-    # 核心四：強固的多人即時特徵與輪廓動態鎖定演算法
-    # ----------------------------------------------------
-    with tab4:
-        st.subheader("🤖 智慧人臉自動偵測與統計稽核")
-        st.markdown("系統採用 **YCrCb 色彩空間動態輪廓分割與區域過濾演算法**，即時辨識畫面中的多人分佈。")
+      # --- Tab 4: 智慧人臉偵測模組 (雲端強固免崩潰版) ---
+      with tab4:
+        st.subheader("👤 核心四：智慧人臉自動偵測與統計")
+        st.write(
+            "系統採用高強固的色彩空間特徵與輪廓分析演算法，即時鎖定並標記畫面中的目標特徵。"
+        )
 
-        h_img, w_img = image.shape[:2]
-        faces = []
+        img_detected = img_bgr.copy()
 
-        # 1. 轉換至 YCrCb 色彩空間進行膚色分離
-        ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+        # 透過 YCrCb 色彩空間過濾膚色特徵，完美繞過雲端 CascadeClassifier 缺失的問題
+        ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
         mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-        # 2. 形態學處理以平滑並分離相鄰的臉部區域
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph, iterations=1)
+        mask = cv2.morphologyEx(
+            mask, cv2.MORPH_CLOSE, kernel_morph, iterations=2
+        )
 
-        # 3. 尋找所有獨立輪廓
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
 
-        candidates = []
-        # 設定適應大合照中人頭大小的面積與長寬比例閾值
-        min_area = (w_img * h_img) * 0.0004
-        max_area = (w_img * h_img) * 0.08
+        faces = []
+        min_area = (width * height) * 0.0004
+        max_area = (width * height) * 0.08
 
         for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if min_area < area < max_area:
-                x, y, w, h = cv2.boundingRect(cnt)
-                aspect_ratio = h / float(w)
-                # 篩選符合人頭與臉部直立結構的比例
-                if 0.7 <= aspect_ratio <= 2.3:
-                    # 動態調整方框大小，使其完美貼合頭部與臉部區域
-                    box_w = max(int(w * 1.1), 25)
-                    box_h = max(int(h * 1.1), 30)
-                    box_x = max(0, x - int((box_w - w) / 2))
-                    box_y = max(0, y - int((box_h - h) / 2))
-                    candidates.append((box_x, box_y, box_w, box_h))
+          area = cv2.contourArea(cnt)
+          if min_area < area < max_area:
+            x, y, w, h = cv2.boundingRect(cnt)
+            aspect_ratio = h / float(w)
+            if 0.7 <= aspect_ratio <= 2.3:
+              box_w = max(int(w * 1.1), 25)
+              box_h = max(int(h * 1.1), 30)
+              box_x = max(0, x - int((box_w - w) / 2))
+              box_y = max(0, y - int((box_h - h) / 2))
+              faces.append((box_x, box_y, box_w, box_h))
 
-        # 4. 非極大值抑制與重疊過濾 (NMS)
-        candidates = sorted(candidates, key=lambda b: b[2] * b[3], reverse=True)
-        for box in candidates:
-            x, y, w, h = box
-            overlap = False
-            for fx, fy, fw, fh in faces:
-                # 檢查是否與現有方框過度重疊
-                if abs(x - fx) < fw * 0.6 and abs(y - fy) < fh * 0.6:
-                    overlap = True
-                    break
-            if not overlap and x + w <= w_img and y + h <= h_img:
-                faces.append((x, y, w, h))
+        # 非極大值抑制與重疊過濾 (NMS)
+        faces = sorted(faces, key=lambda b: b[2] * b[3], reverse=True)
+        final_faces = []
+        for box in faces:
+          x, y, w, h = box
+          overlap = False
+          for fx, fy, fw, fh in final_faces:
+            if abs(x - fx) < fw * 0.6 and abs(y - fy) < fh * 0.6:
+              overlap = True
+              break
+          if not overlap and x + w <= width and y + h <= height:
+            final_faces.append((x, y, w, h))
 
-        detected_img = image.copy()
-        for idx, (x, y, w, h) in enumerate(faces, start=1):
-            cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv2.putText(detected_img, f"Face #{idx}", (x, max(0, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 2)
+        face_count = len(final_faces)
+        audit_records = []
 
-        col_d1, col_d2 = st.columns([1.2, 1])
-        with col_d1:
-            st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"人臉偵測結果 (即時識別 {len(faces)} 張人臉)", use_column_width=True)
-        with col_d2:
-            st.markdown("#### 📋 偵測結果摘要")
-            if len(faces) > 0:
-                st.success(f"成功即時辨識並標記多人臉部！總計偵測數：**{len(faces)} 張**")
-                face_data = []
-                for idx, (x, y, w, h) in enumerate(faces, start=1):
-                    face_data.append({
-                        "Face ID": f"#{idx}",
-                        "X 座標": x,
-                        "Y 座標": y,
-                        "寬度 (W)": w,
-                        "高度 (H)": h
-                    })
-                st.table(face_data)
-            else:
-                st.warning("畫面中未偵測到符合條件的人臉。")
+        for idx, (x, y, w, h) in enumerate(final_faces):
+          cv2.rectangle(img_detected, (x, y), (x + w, y + h), (0, 255, 0), 2)
+          cv2.putText(
+              img_detected,
+              f"Face #{idx+1}",
+              (x, max(0, y - 8)),
+              cv2.FONT_HERSHEY_SIMPLEX,
+              0.5,
+              (0, 255, 0),
+              2,
+          )
+          audit_records.append({
+              "Face ID": idx + 1,
+              "X 座標": x,
+              "Y 座標": y,
+              "寬度 (W)": w,
+              "高度 (H)": h,
+          })
+
+        img_detected_rgb = cv2.cvtColor(img_detected, cv2.COLOR_BGR2RGB)
+
+        col_res1, col_res2 = st.columns([1.3, 0.7])
+        with col_res1:
+          st.image(
+              img_detected_rgb,
+              caption=f"人臉偵測結果 (發現 {face_count} 個目標)",
+              use_container_width=True,
+          )
+
+        with col_res2:
+          st.markdown("#### 📋 偵測結果摘要")
+          st.metric(label="偵測總目標數", value=f"{face_count} 個")
+          st.markdown("---")
+
+          if face_count > 0:
+            st.success("成功即時識別並標記目標特徵！")
+            st.dataframe(audit_records, use_container_width=True)
+          else:
+            st.warning(
+                "未偵測到符合條件的特徵，請確認上傳的照片對比是否清晰。"
+            )
+
+    else:
+      st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
+
+  except Exception as e:
+    st.error(f"❌ 讀取過程發生異常錯誤: {e}")
 
 else:
-    st.warning("👈 請從左側側邊欄上傳圖片，以啟動系統四大核心互動模組！")
+  st.info("👈 請由左側側邊欄上傳支援的點陣圖檔案（PNG, JPG, JPEG, BMP）以啟動系統。")
