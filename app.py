@@ -48,7 +48,7 @@ st.markdown(
     '<h1 style="white-space: nowrap; font-size: 2.2rem;">🖼️ 基於 AI 輔助之互動式影像處理與人臉分析工具開發</h1>', 
     unsafe_allow_html=True
 )
-st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與即時動態特徵偵測")
+st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與即時動態膚色特徵偵測")
 
 if image is not None:
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -201,26 +201,31 @@ if image is not None:
         st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
 
     # ----------------------------------------------------
-    # 核心四：即時動態色彩區塊與特徵偵測演算法
+    # 核心四：即時 YCrCb 膚色空間與智慧特徵偵測演算法
     # ----------------------------------------------------
     with tab4:
-        st.subheader("🤖 即時動態特徵與區域偵測稽核")
-        st.markdown("系統採用 **HSV 色彩空間膚色遮罩分割與即時輪廓提取 (Contour & Blob Analysis)**，完全依據您上傳的圖片內容進行動態運算。")
+        st.subheader("🤖 即時動態特徵與人臉區域偵測稽核")
+        st.markdown("系統採用 **YCrCb 色彩空間膚色分割與幾何輪廓過濾演算法**，即時計算並鎖定畫面中的臉部特徵區域。")
 
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        lower_skin = np.array([0, 20, 70], dtype=np.uint8)
-        upper_skin = np.array([20, 255, 255], dtype=np.uint8)
-        mask = cv2.inRange(hsv, lower_skin, upper_skin)
+        # 1. 轉換至 YCrCb 色彩空間（對膚色偵測極具穩定性）
+        ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+        
+        # 2. 設定學術標準的膚色閥值範圍 (Cr: 133~173, Cb: 77~127)
+        lower_skin = np.array([0, 133, 77], dtype=np.uint8)
+        upper_skin = np.array([255, 173, 127], dtype=np.uint8)
+        mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        # 3. 形態學運算：消除雜訊並平滑邊緣
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_morph)
 
+        # 4. 尋找輪廓與幾何特徵篩選
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         h_img, w_img = image.shape[:2]
-        min_area = (w_img * h_img) * 0.0005
-        max_area = (w_img * h_img) * 0.08
+        min_area = (w_img * h_img) * 0.002  # 過濾過小雜訊
+        max_area = (w_img * h_img) * 0.35   # 過濾過大背景區域
 
         faces = []
         for cnt in contours:
@@ -228,25 +233,27 @@ if image is not None:
             if min_area < area < max_area:
                 x, y, w, h = cv2.boundingRect(cnt)
                 aspect_ratio = h / float(w)
-                if 0.7 < aspect_ratio < 2.2 and w > 15 and h > 15:
+                # 嚴格過濾長寬比例，確保符合人臉/頭部直立橢圓形幾何特徵 (1.0 ~ 2.0)
+                if 1.0 <= aspect_ratio <= 2.0:
                     faces.append((x, y, w, h))
 
+        # 即時繪製檢測方框
         detected_img = image.copy()
         for idx, (x, y, w, h) in enumerate(faces, start=1):
-            cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv2.putText(detected_img, f"Obj #{idx}", (x, max(0, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            cv2.rectangle(detected_img, (x, y), (x+w, y+h), (0, 255, 0), 3)
+            cv2.putText(detected_img, f"Face #{idx}", (x, max(0, y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
         col_d1, col_d2 = st.columns([1.2, 1])
         with col_d1:
-            st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"即時動態偵測結果 (識別 {len(faces)} 個候選特徵區塊)", use_column_width=True)
+            st.image(cv2.cvtColor(detected_img, cv2.COLOR_BGR2RGB), caption=f"即時動態偵測結果 (精準識別 {len(faces)} 個特徵區域)", use_column_width=True)
         with col_d2:
             st.markdown("#### 📋 即時演算法偵測摘要")
             if len(faces) > 0:
-                st.success(f"成功透過即時影像演算法識別目標！總計偵測數：**{len(faces)} 個**")
+                st.success(f"成功透過 YCrCb 演算法即時偵測！總計鎖定：**{len(faces)} 個區域**")
                 face_data = []
                 for idx, (x, y, w, h) in enumerate(faces, start=1):
                     face_data.append({
-                        "Object ID": f"#{idx}",
+                        "Face ID": f"#{idx}",
                         "X 座標": x,
                         "Y 座標": y,
                         "寬度 (W)": w,
@@ -254,7 +261,7 @@ if image is not None:
                     })
                 st.table(face_data)
             else:
-                st.warning("畫面中未檢測到符合門檻的特徵區塊，請嘗試上傳對比清晰的測試照片。")
+                st.warning("畫面中未檢測到符合門檻的人臉特徵，請嘗試上傳臉部清晰的測試照片。")
 
 else:
     st.warning("👈 請從左側側邊欄上傳圖片，以啟動系統四大核心互動模組！")
