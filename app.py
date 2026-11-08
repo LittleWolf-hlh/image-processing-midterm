@@ -1,4 +1,5 @@
 from io import BytesIO
+import math
 import os
 import urllib.request
 import cv2
@@ -64,9 +65,7 @@ else:
       img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
       file_size_kb = len(image_bytes) / 1024
 
-      # ---------------------------------------------------------
       # Tab 0: 基礎資訊
-      # ---------------------------------------------------------
       with basic_tab:
         st.subheader("圖片預覽與中繼資訊")
         st.image(img_rgb, caption="原始影像預覽", use_container_width=True)
@@ -76,9 +75,7 @@ else:
         size_col.metric("檔案大小", f"{file_size_kb:.2f} KB")
         st.caption(f"檔名：{uploaded_file.name}")
 
-      # ---------------------------------------------------------
       # Tab 1: 色彩空間與動態直方圖分析
-      # ---------------------------------------------------------
       with color_tab:
         st.subheader("多色彩空間切換與動態直方圖分析")
         mode = st.radio(
@@ -161,9 +158,7 @@ else:
           plt.tight_layout()
           st.pyplot(fig)
 
-      # ---------------------------------------------------------
       # Tab 2: 自訂卷積與 PSNR 計算
-      # ---------------------------------------------------------
       with convolution_tab:
         st.subheader("自訂卷積核 (Kernel Matrix) 空間濾波與 PSNR 分析")
 
@@ -252,9 +247,7 @@ else:
               f"⚠️ 解析矩陣失敗：請確保格式正確，輸入皆為數字。（訊息: {e}）"
           )
 
-      # ---------------------------------------------------------
       # Tab 3: 人臉偵測 (OpenCV YuNet AI 深度學習模型 + 科幻 HUD 視覺)
-      # ---------------------------------------------------------
       with face_tab:
         st.subheader("OpenCV ONNX YuNet AI 人臉偵測模組")
 
@@ -275,7 +268,6 @@ else:
 
           _, faces = detector.detect(img_bgr)
 
-          # 結合你喜歡的科幻 HUD 瞄準效果 (亮青色)
           cyan = (255, 255, 0)
 
           if faces is not None:
@@ -286,7 +278,6 @@ else:
               x, y = max(0, x), max(0, y)
               confidence = float(face[-1])
 
-              # 基礎定位框 & 中心十字準星
               cv2.rectangle(annotated_img, (x, y), (x + w, y + h), cyan, 1)
               cv2.drawMarker(
                   annotated_img,
@@ -297,7 +288,6 @@ else:
                   thickness=2,
               )
 
-              # 四個角落的 L 型瞄準架 (Corner HUD)
               d = int(w * 0.15)
               for tx, ty in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]:
                 dx = -d if tx == x + w else d
@@ -305,7 +295,6 @@ else:
                 cv2.line(annotated_img, (tx, ty), (tx + dx, ty), cyan, 4)
                 cv2.line(annotated_img, (tx, ty), (tx, ty + dy), cyan, 4)
 
-              # 系統鎖定文字資訊
               cv2.putText(
                   annotated_img,
                   "TARGET: HUMAN_FACE",
@@ -352,6 +341,9 @@ else:
             st.dataframe(face_details, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
+
+    else:
+      st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
 
   except Exception as e:
     st.error(f"❌ 讀取過程發生異常錯誤: {e}")
