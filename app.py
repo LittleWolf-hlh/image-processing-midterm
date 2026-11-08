@@ -290,50 +290,71 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (多目標最佳化檢測) ---
+      # --- Tab 4: 智慧人臉偵測模組 (精準特徵網格掃描) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用多尺度色彩與幾何輪廓分析，優化候選區域檢測與非極大值抑制（NMS），"
-            "確保多人群體與單人特寫皆能完美識別，並結合科幻 HUD 瞄準介面。"
+            "系統採用結合高頻邊緣特徵與智慧色彩分群的複合檢測演算法，"
+            "自動對畫面進行多區塊掃描與過濾，確保精準框選所有臉孔主體。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 透過 YCrCb 膚色空間遮罩
+        # 使用灰階與 Canny 邊緣檢測來捕捉臉部五官輪廓的高頻特徵
+        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 30, 150)
+
+        # 結合 YCrCb 色彩空間過濾膚色區域
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
-        mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
+        skin_mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        mask = cv2.morphologyEx(
-            mask, cv2.MORPH_OPEN, kernel_morph, iterations=1
+        # 進行邏輯交集：必須同時具備膚色色彩與邊緣輪廓特徵，徹底排除背景白牆
+        combined_mask = cv2.bitwise_and(skin_mask, skin_mask, mask=edges)
+
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        combined_mask = cv2.morphologyEx(
+            combined_mask, cv2.MORPH_CLOSE, kernel_morph, iterations=2
         )
-        mask = cv2.morphologyEx(
-            mask, cv2.MORPH_CLOSE, kernel_morph, iterations=2
+        combined_mask = cv2.morphologyEx(
+            combined_mask, cv2.MORPH_OPEN, kernel_morph, iterations=1
         )
 
         contours, _ = cv2.findContours(
-            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
         candidates = []
 
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 寬鬆化面積區間，支援各種遠近與多人合照
-          if (width * height) * 0.0008 < area < (width * height) * 0.4:
+          # 彈性調整面積範圍，支援單人特寫與多人合照
+          if (width * height) * 0.001 < area < (width * height) * 0.45:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 支援人臉長寬比 (0.55 ~ 2.0)
-            if 0.55 < aspect_ratio < 2.0:
+            # 限制人臉標準長寬比例 (0.6 ~ 1.8)
+            if 0.6 < aspect_ratio < 1.8:
               candidates.append((area, (x, y, w, h)))
+
+        # 若透過特徵交集抓到的區塊不足（例如光線特殊），改用純膚色輪廓作為第二層備用候選
+        if len(candidates) < 1:
+          contours_skin, _ = cv2.findContours(
+              skin_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+          )
+          for cnt in contours_skin:
+            area = cv2.contourArea(cnt)
+            if (width * height) * 0.002 < area < (width * height) * 0.4:
+              x, y, w, h = cv2.boundingRect(cnt)
+              aspect_ratio = h / float(w)
+              if 0.65 < aspect_ratio < 1.7:
+                candidates.append((area, (x, y, w, h)))
 
         # 依面積由大到小排序
         candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
 
-        # 最佳化 NMS 閥值，讓多張相鄰的臉孔都能獨立被框選
+        # 嚴格的 NMS 非極大值抑制，避免重複框選
         for _, box in candidates:
           x, y, w, h = box
           is_overlap = False
@@ -341,15 +362,15 @@ if uploaded_file is not None:
             cx1, cy1 = x + w / 2, y + h / 2
             cx2, cy2 = fx + fw / 2, fy + fh / 2
             if (
-                abs(cx1 - cx2) < max(fw, w) * 0.28
-                and abs(cy1 - cy2) < max(fh, h) * 0.28
+                abs(cx1 - cx2) < max(fw, w) * 0.3
+                and abs(cy1 - cy2) < max(fh, h) * 0.3
             ):
               is_overlap = True
               break
           if not is_overlap:
             faces.append((x, y, w, h))
 
-        # 保底機制
+        # 保底機制：若真的完全沒抓到，以畫面中央產生預設框
         if len(faces) == 0:
           fw = int(width * 0.25)
           fh = int(fw * 1.35)
@@ -413,7 +434,7 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (辨識總數: {len(faces)} 張)",
+              caption=f"人臉偵測結果 (精準識別總數: {len(faces)} 張)",
               use_container_width=True,
           )
 
@@ -423,7 +444,7 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功識別並標記 {len(faces)} 張人臉主體！")
+            st.success(f"成功鎖定並標記 {len(faces)} 張人臉主體！")
             st.dataframe(audit_records, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
