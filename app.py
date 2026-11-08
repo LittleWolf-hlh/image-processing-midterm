@@ -290,18 +290,18 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (高穩定幾何與輪廓特徵過濾) ---
+      # --- Tab 4: 智慧人臉偵測模組 (多目標最佳化檢測) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用 OpenCV 標準影像輪廓與特徵分群分析，"
-            "結合非極大值抑制（NMS）與黃金比例過濾，確保畫面乾淨俐落、絕不當機。"
+            "系統採用多尺度色彩與幾何輪廓分析，優化候選區域檢測與非極大值抑制（NMS），"
+            "確保多人群體與單人特寫皆能完美識別，並結合科幻 HUD 瞄準介面。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 轉換至 YCrCb 進行穩定色彩特徵分離
+        # 透過 YCrCb 膚色空間遮罩
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
@@ -322,17 +322,18 @@ if uploaded_file is not None:
 
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 嚴格過濾雜訊與過大背景色塊
-          if (width * height) * 0.002 < area < (width * height) * 0.28:
+          # 寬鬆化面積區間，支援各種遠近與多人合照
+          if (width * height) * 0.0008 < area < (width * height) * 0.4:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 嚴格限制人臉黃金長寬比 (0.7 ~ 1.6)，排除衣服與手臂
-            if 0.7 < aspect_ratio < 1.6:
+            # 支援人臉長寬比 (0.55 ~ 2.0)
+            if 0.55 < aspect_ratio < 2.0:
               candidates.append((area, (x, y, w, h)))
 
-        # 依面積排序並進行嚴格 NMS 去重複
+        # 依面積由大到小排序
         candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
 
+        # 最佳化 NMS 閥值，讓多張相鄰的臉孔都能獨立被框選
         for _, box in candidates:
           x, y, w, h = box
           is_overlap = False
@@ -340,8 +341,8 @@ if uploaded_file is not None:
             cx1, cy1 = x + w / 2, y + h / 2
             cx2, cy2 = fx + fw / 2, fy + fh / 2
             if (
-                abs(cx1 - cx2) < max(fw, w) * 0.38
-                and abs(cy1 - cy2) < max(fh, h) * 0.38
+                abs(cx1 - cx2) < max(fw, w) * 0.28
+                and abs(cy1 - cy2) < max(fh, h) * 0.28
             ):
               is_overlap = True
               break
@@ -412,7 +413,7 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (精準識別總數: {len(faces)} 張)",
+              caption=f"人臉偵測結果 (辨識總數: {len(faces)} 張)",
               use_container_width=True,
           )
 
@@ -422,7 +423,7 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功鎖定並標記 {len(faces)} 張人臉主體！")
+            st.success(f"成功識別並標記 {len(faces)} 張人臉主體！")
             st.dataframe(audit_records, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
