@@ -290,7 +290,7 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (獨立自主研發之強固型特徵與色彩區塊分析) ---
+      # --- Tab 4: 智慧人臉偵測模組 (強固色彩區塊與幾何輪廓分析) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
@@ -301,7 +301,6 @@ if uploaded_file is not None:
         img_detected = img_bgr.copy()
         faces = []
 
-        # 透過 YCrCb 膚色分割與幾何長寬比過濾進行智慧標記
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
@@ -321,15 +320,12 @@ if uploaded_file is not None:
         candidates = []
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 動態適應不同距離的面部面積
           if (width * height) * 0.0008 < area < (width * height) * 0.3:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 限制合理的人臉長寬比例
             if 0.5 < aspect_ratio < 2.5:
               candidates.append((x, y, w, h))
 
-        # 獨立的非極大值抑制與重疊過濾，確保多人合照時每個人臉不漏抓也不重複
         candidates = sorted(candidates, key=lambda b: b[2] * b[3], reverse=True)
         for box in candidates:
           x, y, w, h = box
@@ -344,7 +340,6 @@ if uploaded_file is not None:
           if not overlap:
             faces.append((x, y, w, h))
 
-        # 若未偵測到任何區塊，自動提供畫面正中央的預設主體框
         if len(faces) == 0:
           fw = int(width * 0.28)
           fh = int(fw * 1.3)
@@ -352,12 +347,10 @@ if uploaded_file is not None:
           fy = int((height - fh) / 2.2)
           faces = [(fx, fy, fw, fh)]
 
-        # 繪製亮青色 Tech HUD 瞄準介面
         cyan = (255, 255, 0)
         audit_records = []
 
         for idx, (x, y, w, h) in enumerate(faces, start=1):
-          # 基礎定位框 & 中心十字準星
           cv2.rectangle(img_detected, (x, y), (x + w, y + h), cyan, 1)
           cv2.drawMarker(
               img_detected,
@@ -368,7 +361,6 @@ if uploaded_file is not None:
               thickness=2,
           )
 
-          # 四個角落的 L 型瞄準架 (Corner HUD)
           d = int(w * 0.15)
           for tx, ty in [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]:
             dx = -d if tx == x + w else d
@@ -376,7 +368,6 @@ if uploaded_file is not None:
             cv2.line(img_detected, (tx, ty), (tx + dx, ty), cyan, 4)
             cv2.line(img_detected, (tx, ty), (tx, ty + dy), cyan, 4)
 
-          # 系統鎖定文字資訊
           cv2.putText(
               img_detected,
               "TARGET: HUMAN_FACE",
