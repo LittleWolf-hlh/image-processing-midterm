@@ -290,24 +290,24 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (高精準防誤判嚴格過濾) ---
+      # --- Tab 4: 智慧人臉偵測模組 (黃金平衡多目標偵測) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用高精準度的膚色幾何檢測，嚴格過濾非人臉雜訊與背景干擾，"
-            "確保「寧缺勿濫、絕不誤判」，並結合科幻 HUD 瞄準介面。"
+            "系統採用黃金平衡檢測策略，確保合照中主要的人臉主體皆能被有效涵蓋，"
+            "並結合科幻 HUD 瞄準介面。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 透過高純度 YCrCb 膚色空間遮罩
+        # 透過 YCrCb 膚色空間遮罩
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
         mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         mask = cv2.morphologyEx(
             mask, cv2.MORPH_OPEN, kernel_morph, iterations=1
         )
@@ -322,18 +322,18 @@ if uploaded_file is not None:
 
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 嚴格限制面積上下限，排除過大的皮膚色塊（如手臂、衣服）與微小雜訊
-          if (width * height) * 0.003 < area < (width * height) * 0.22:
+          # 適度調整面積範圍，確保能夠抓到 5 人以上甚至多人的群體合照
+          if (width * height) * 0.0012 < area < (width * height) * 0.35:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            # 嚴格限制人臉長寬比 (0.75 ~ 1.5)，完美過濾非人臉形狀
-            if 0.75 < aspect_ratio < 1.5:
+            # 長寬比設定在 0.6 ~ 1.8 之間，兼顧精準度與數量
+            if 0.6 < aspect_ratio < 1.8:
               candidates.append((area, (x, y, w, h)))
 
         # 依面積由大到小排序
         candidates = sorted(candidates, key=lambda item: item[0], reverse=True)
 
-        # 嚴格的 NMS 去重複，確保每個位置只有一個精準框
+        # 適度的 NMS 距離，確保多個主體能各自獨立被框選，不漏掉群體中的人
         for _, box in candidates:
           x, y, w, h = box
           is_overlap = False
@@ -341,8 +341,8 @@ if uploaded_file is not None:
             cx1, cy1 = x + w / 2, y + h / 2
             cx2, cy2 = fx + fw / 2, fy + fh / 2
             if (
-                abs(cx1 - cx2) < max(fw, w) * 0.4
-                and abs(cy1 - cy2) < max(fh, h) * 0.4
+                abs(cx1 - cx2) < max(fw, w) * 0.32
+                and abs(cy1 - cy2) < max(fh, h) * 0.32
             ):
               is_overlap = True
               break
@@ -413,7 +413,7 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (高精準防誤判總數: {len(faces)} 張)",
+              caption=f"人臉偵測結果 (辨識總數: {len(faces)} 張)",
               use_container_width=True,
           )
 
@@ -423,7 +423,7 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功精準鎖定 {len(faces)} 張人臉主體！")
+            st.success(f"成功識別並標記 {len(faces)} 張人臉主體！")
             st.dataframe(audit_records, use_container_width=True)
           else:
             st.warning("未偵測到人臉。")
