@@ -16,7 +16,7 @@ st.set_page_config(
 
 st.title("🖼️ AI 輔助影像處理與人臉分析系統")
 st.write(
-    "期中專題實作介面 —— 整合色彩空間分析、手動卷積濾波與智慧人臉檢測"
+    "期中專題實作介面 —— 整合色彩空間分析、手動卷積濾波與 OpenCV DNN 深度學習人臉檢測"
 )
 
 # -------------------------------------------------------------
@@ -291,34 +291,70 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (線上自動下載模型與 Haar 級聯特徵辨識) ---
+      # --- Tab 4: 智慧人專用模組 (OpenCV DNN 深度學習人臉檢測) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用 OpenCV 標準 **Haar Cascade 級聯特徵分類器**，"
-            "透過線上動態模型載入精準辨識人臉五官與幾何結構，徹底告別背景誤判，並結合科幻 HUD 瞄準介面。"
+            "系統採用業界標準 **OpenCV DNN 深度學習模型 (ResNet-10 SSD)**，"
+            "透過神經網路精準辨識人臉，杜絕背景誤判，並結合科幻 HUD 瞄準介面。"
         )
 
-        # 自動線上載入官方特徵模型檔
-        xml_path = "haarcascade_frontalface_default.xml"
-        if not os.path.exists(xml_path):
+        # 自動下載 OpenCV DNN 所需的模型與結構檔
+        prototxt_path = "deploy.prototxt"
+        model_path = "res10_300x300_ssd_iter_140000.caffemodel"
+
+        if not os.path.exists(prototxt_path):
           try:
-            url = "https://raw.githubusercontent.com/opencv/opencv/master/data/haarcascades/haarcascade_frontalface_default.xml"
-            urllib.request.urlretrieve(url, xml_path)
+            urllib.request.urlretrieve(
+                "https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/face_detector/deploy.prototxt",
+                prototxt_path,
+            )
+          except Exception:
+            pass
+
+        if not os.path.exists(model_path):
+          try:
+            urllib.request.urlretrieve(
+                "https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_face_detector_20170830/res10_300x300_ssd_iter_140000.caffemodel",
+                model_path,
+            )
           except Exception:
             pass
 
         img_detected = img_bgr.copy()
-        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-
         faces = []
-        if os.path.exists(xml_path):
-          face_cascade = cv2.CascadeClassifier(xml_path)
-          detected_boxes = face_cascade.detectMultiScale(
-              gray, scaleFactor=1.08, minNeighbors=4, minSize=(30, 30)
+
+        if os.path.exists(prototxt_path) and os.path.exists(model_path):
+          net = cv2.dnn.readNetFromCaffe(prototxt_path, model_path)
+          blob = cv2.dnn.blobFromImage(
+              cv2.resize(img_bgr, (300, 300)),
+              1.0,
+              (300, 300),
+              [104.0, 177.0, 123.0],
           )
-          if len(detected_boxes) > 0:
-            faces = detected_boxes
+          net.setInput(blob)
+          detections = net.forward()
+
+          for i in range(detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+            # 設定信心指數閥值 0.5，確保抓出來的全都是真正的臉
+            if confidence > 0.5:
+              box = detections[0, 0, i, 3:7] * np.array(
+                  [width, height, width, height]
+              )
+              (startX, startY, endX, endY) = box.astype("int")
+
+              # 確保座標在影像範圍內
+              startX = max(0, startX)
+              startY = max(0, startY)
+              endX = min(width, endX)
+              endY = min(height, endY)
+
+              w = endX - startX
+              h = endY - startY
+
+              if w > 10 and h > 10:
+                faces.append((startX, startY, w, h))
 
         cyan = (255, 255, 0)
         audit_records = []
@@ -343,7 +379,7 @@ if uploaded_file is not None:
 
           cv2.putText(
               img_detected,
-              f"FEATURE_FACE #{idx}",
+              f"DNN_FACE #{idx}",
               (x, max(0, y - 25)),
               cv2.FONT_HERSHEY_SIMPLEX,
               0.5,
@@ -377,7 +413,7 @@ if uploaded_file is not None:
           st.image(
               img_detected_rgb,
               caption=(
-                  "人臉特徵偵測結果 (Haar Cascade 識別總數:"
+                  "人臉偵測結果 (OpenCV DNN 深度學習辨識總數:"
                   f" {len(faces)} 張)"
               ),
               use_container_width=True,
@@ -389,12 +425,12 @@ if uploaded_file is not None:
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功透過人臉特徵辨識鎖定 {len(faces)} 張臉孔！")
+            st.success(
+                f"成功透過 OpenCV DNN 深度學習精準鎖定 {len(faces)} 張臉孔！"
+            )
             st.dataframe(audit_records, use_container_width=True)
           else:
-            st.warning(
-                "未偵測到人臉特徵。請確認上傳正面人臉清晰之測試影像。"
-            )
+            st.warning("未偵測到人臉。")
 
     else:
       st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
