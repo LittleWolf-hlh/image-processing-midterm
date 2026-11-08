@@ -288,35 +288,37 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (結合安全本地 XML 與 Colab HUD 視覺風格) ---
+      # --- Tab 4: 智慧人臉偵測模組 (修正路徑，完美結合 Colab 科技 HUD 瞄準介面) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用標準 CascadeClassifier 偵測，並結合科幻 HUD 瞄準介面，精準識別與標記人臉。"
+            "系統直接讀取本地 Haar 分類器模型，並結合科幻 HUD 瞄準介面，精準識別與標記人臉。"
         )
 
         img_detected = img_bgr.copy()
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+        gray_eq = cv2.equalizeHist(gray)
 
-        cascade_filename = "haarcascade_frontalface_default.xml"
         faces = []
+        cascade_filename = "haarcascade_frontalface_default.xml"
 
         if os.path.exists(cascade_filename):
           try:
+            # 修正：直接以字串檔案路徑初始化，完全避開 cv2.data 模組在雲端可能遺失的問題
             face_cascade = cv2.CascadeClassifier(cascade_filename)
             if not face_cascade.empty():
               faces = face_cascade.detectMultiScale(
-                  gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+                  gray_eq, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
               )
-          except Exception:
-            faces = []
+          except Exception as e:
+            st.error(f"模型載入或檢測發生錯誤: {e}")
         else:
           st.error(
               f"⚠️ 找不到模型檔案 `{cascade_filename}`，請確認該檔案已上傳至"
               " GitHub 專案根目錄！"
           )
 
-        # 完美還原 Colab 的科技感 HUD 瞄準效果 (亮青色)
+        # 完美還原你提供的 Colab 繪製科幻 HUD 瞄準效果 (亮青色)
         cyan = (255, 255, 0)
         audit_records = []
 
