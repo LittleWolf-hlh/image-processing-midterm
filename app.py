@@ -35,7 +35,6 @@ def on_preset_change():
 st.sidebar.header("📁 影像檔案上傳")
 uploaded_file = st.sidebar.file_uploader("請上傳測試影像 (PNG, JPG, JPEG, BMP)", type=["png", "jpg", "jpeg", "bmp"])
 
-# 預設測試圖片處理或使用者上傳圖片
 if uploaded_file is not None:
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
@@ -52,7 +51,6 @@ st.markdown(
 st.markdown("期中專題實作介面 ———— 整合色彩空間分析、手動卷積濾波與智慧人臉檢測")
 
 if image is not None:
-    # 建立四大核心功能分頁 (st.tabs)
     tab1, tab2, tab3, tab4 = st.tabs([
         "1. 原始與中繼資訊", 
         "2. 色彩空間與直方圖", 
@@ -203,27 +201,24 @@ if image is not None:
         st.metric(label="📈 峰值信噪比 (Peak Signal-to-Noise Ratio, PSNR)", value=f"{psnr_val:.2f} dB")
 
     # ----------------------------------------------------
-    # 核心四：智慧人臉自動偵測與統計 (具備安全防護)
+    # 核心四：智慧人臉自動偵測與統計 (全面安全保護)
     # ----------------------------------------------------
     with tab4:
         st.subheader("🤖 智慧人臉自動偵測與統計稽核")
         st.markdown("系統採用高門檻過濾機制，自動清除背景與衣服紋理等誤判雜訊。")
 
         try:
-            # 嘗試安全載入 CascadeClassifier
             if hasattr(cv2, 'CascadeClassifier'):
                 cascade_path = 'haarcascade_frontalface_default.xml'
                 if not os.path.exists(cascade_path):
                     cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-
                 face_cascade = cv2.CascadeClassifier(cascade_path)
             else:
                 face_cascade = None
 
             if face_cascade is None or face_cascade.empty():
-                st.info("💡 提示：目前雲端執行環境未支援物件偵測模組。本機端執行時可完整呈現人臉檢測與座標列表。")
-                # 即使雲端無法偵測，也平順展示原圖避免崩潰
-                st.image(image_rgb, caption="影像預覽（雲端環境人臉偵測功能已由防護機制隔離）", use_column_width=True)
+                st.info("💡 提示：本機端執行時可完整呈現人臉檢測與座標列表。雲端展示時可透過前三大核心模組進行完整呈現。")
+                st.image(image_rgb, caption="原始影像預覽", use_column_width=True)
             else:
                 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
                 gray = cv2.equalizeHist(gray)
@@ -260,9 +255,9 @@ if image is not None:
                         st.table(face_data)
                     else:
                         st.warning("畫面中未偵測到符合門檻的人臉，請嘗試更換測試照片。")
-        except Exception as e:
-            st.info("💡 提示：本機端完整支援人臉辨識。雲端展示時可透過前三大核心模組進行完整呈現。")
-            st.image(image_rgb, caption="影像預覽", use_column_width=True)
+        except Exception:
+            st.info("💡 提示：本機端完整支援人臉辨識。")
+            st.image(image_rgb, caption="原始影像預覽", use_column_width=True)
 
 else:
     st.warning("👈 請從左側側邊欄上傳圖片，以啟動系統四大核心互動模組！")
