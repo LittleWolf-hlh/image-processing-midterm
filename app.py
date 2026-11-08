@@ -288,17 +288,17 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (安全防護雙軌版，支援 Colab 科技 HUD 視覺) ---
+      # --- Tab 4: 智慧人臉偵測模組 (動態高精度適應單人與多人合照) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用高強固人臉偵測與科幻 HUD 瞄準介面，精準識別與標記人臉。"
+            "系統自動適應單人特寫與多人合照，精準識別並以科幻 HUD 瞄準介面標記人臉。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 雙軌機制：優先嘗試 CascadeClassifier，若環境不支援則自動切換為強固特徵輪廓偵測
+        # 嘗試使用標準 Haar 檢測（若雲端環境支援）
         cascade_filename = "haarcascade_frontalface_default.xml"
         try:
           if hasattr(cv2, "CascadeClassifier") and os.path.exists(
@@ -308,20 +308,25 @@ if uploaded_file is not None:
             if face_cascade is not None and not face_cascade.empty():
               gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
               faces = face_cascade.detectMultiScale(
-                  gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+                  gray, scaleFactor=1.1, minNeighbors=4, minSize=(25, 25)
               )
         except Exception:
           faces = []
 
-        if len(faces) == 0:
+        # 如果 Haar 未偵測到或人數較多時，結合多尺度分割演算法確保多人合照不漏掉
+        if len(faces) <= 1:
           ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
           lower_skin = np.array([0, 133, 77], dtype=np.uint8)
           upper_skin = np.array([255, 173, 127], dtype=np.uint8)
           mask = cv2.inRange(ycrcb, lower_skin, upper_skin)
 
-          kernel_morph = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-          mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_morph)
-          mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_morph)
+          kernel_morph = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+          mask = cv2.morphologyEx(
+              mask, cv2.MORPH_OPEN, kernel_morph, iterations=1
+          )
+          mask = cv2.morphologyEx(
+              mask, cv2.MORPH_CLOSE, kernel_morph, iterations=2
+          )
 
           contours, _ = cv2.findContours(
               mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -329,25 +334,36 @@ if uploaded_file is not None:
           candidates = []
           for cnt in contours:
             area = cv2.contourArea(cnt)
-            if (width * height) * 0.003 < area < (width * height) * 0.4:
+            # 動態調整合照中較小臉部的面積範圍
+            if (width * height) * 0.001 < area < (width * height) * 0.25:
               x, y, w, h = cv2.boundingRect(cnt)
               aspect_ratio = h / float(w)
-              if 0.6 <= aspect_ratio <= 2.5:
+              if 0.6 <= aspect_ratio <= 2.2:
                 candidates.append((x, y, w, h))
 
+          # 嚴格的非極大值抑制 (NMS)，避免衣服或肩膀重複框選
           candidates = sorted(
               candidates, key=lambda b: b[2] * b[3], reverse=True
           )
+          detected_boxes = list(faces) if len(faces) > 0 else []
+
           for box in candidates:
             x, y, w, h = box
             overlap = False
-            for fx, fy, fw, fh in faces:
-              if abs(x - fx) < fw * 0.5 and abs(y - fy) < fh * 0.5:
+            for fx, fy, fw, fh in detected_boxes:
+              # 提高重疊判定嚴格度，讓多張臉可以各自獨立被框出
+              if (
+                  abs(x - fx) < max(fw, w) * 0.4
+                  and abs(y - fy) < max(fh, h) * 0.4
+              ):
                 overlap = True
                 break
             if not overlap:
-              faces.append((x, y, w, h))
+              detected_boxes.append((x, y, w, h))
 
+          faces = detected_boxes
+
+          # 若還是完全沒有，使用預設中心框
           if len(faces) == 0:
             fw = int(width * 0.28)
             fh = int(fw * 1.3)
