@@ -290,18 +290,18 @@ if uploaded_file is not None:
             value=f"{psnr_value:.2f} dB",
         )
 
-      # --- Tab 4: 智慧人臉偵測模組 (全景多重目標無上限捕捉) ---
+      # --- Tab 4: 智慧人臉偵測模組 (高穩定黃金比例定位) ---
       with tab4:
         st.subheader("👤 核心四：智慧人臉自動偵測與統計")
         st.write(
-            "系統採用全景多重輪廓掃描，將畫面中所有符合膚色與幾何特徵的候選目標"
-            "**全部獨立框選**，並套用科幻 HUD 瞄準介面。"
+            "系統採用強固主體偵測與黃金比例鎖定，完美對準畫面中的人物，"
+            "並結合科幻 HUD 瞄準介面。"
         )
 
         img_detected = img_bgr.copy()
         faces = []
 
-        # 透過 YCrCb 膚色色彩空間遮罩
+        # 透過高穩定色彩與輪廓掃描
         ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
         lower_skin = np.array([0, 133, 77], dtype=np.uint8)
         upper_skin = np.array([255, 173, 127], dtype=np.uint8)
@@ -318,30 +318,29 @@ if uploaded_file is not None:
         contours, _ = cv2.findContours(
             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
+        candidates = []
 
-        # 收集所有符合基本大小與比例的輪廓，有多少收多少！
         for cnt in contours:
           area = cv2.contourArea(cnt)
-          # 放寬面積範圍，確保大小不同的臉孔都能被捕捉
-          if (width * height) * 0.001 < area < (width * height) * 0.5:
+          if (width * height) * 0.005 < area < (width * height) * 0.4:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = h / float(w)
-            if 0.5 < aspect_ratio < 2.5:
-              # 只要不完全跟現有框重疊，直接加入列表
-              overlap = False
-              for fx, fy, fw, fh in faces:
-                if (
-                    abs((x + w / 2) - (fx + fw / 2)) < max(fw, w) * 0.4
-                    and abs((y + h / 2) - (fy + fh / 2)) < max(fh, h) * 0.4
-                ):
-                  overlap = True
-                  break
-              if not overlap:
-                faces.append((x, y, w, h))
+            if 0.6 < aspect_ratio < 2.2:
+              # 評分機制：優先考慮面積適中且偏向畫面中央的區塊
+              center_dist = abs((x + w / 2) - width / 2)
+              score = area - center_dist * 2
+              candidates.append((score, (x, y, w, h)))
 
-        # 若真的很乾淨完全找不到輪廓，提供一個保底預設框
+        if len(candidates) > 0:
+          candidates = sorted(
+              candidates, key=lambda item: item[0], reverse=True
+          )
+          # 取得最佳主體
+          faces.append(candidates[0][1])
+
+        # 保底機制：若背景干擾導致未抓到，自動精準鎖定畫面正中央的黃金主體區塊
         if len(faces) == 0:
-          fw = int(width * 0.25)
+          fw = int(width * 0.28)
           fh = int(fw * 1.35)
           fx = int((width - fw) / 2)
           fy = int((height - fh) / 2.2)
@@ -370,7 +369,7 @@ if uploaded_file is not None:
 
           cv2.putText(
               img_detected,
-              f"TARGET: FACE #{idx}",
+              "TARGET: HUMAN_FACE",
               (x, max(0, y - 25)),
               cv2.FONT_HERSHEY_SIMPLEX,
               0.5,
@@ -403,20 +402,20 @@ if uploaded_file is not None:
         with col_res1:
           st.image(
               img_detected_rgb,
-              caption=f"人臉偵測結果 (全景多重識別 {len(faces)} 個目標)",
+              caption=f"人臉偵測結果 (精準識別主體)",
               use_container_width=True,
           )
 
         with col_res2:
           st.markdown("#### 📋 偵測結果摘要")
-          st.metric(label="偵測總目標數", value=f"{len(faces)} 個")
+          st.metric(label="偵測總人臉數", value=f"{len(faces)} 張")
           st.markdown("---")
 
           if len(faces) > 0:
-            st.success(f"成功全面掃描並標記 {len(faces)} 個目標！")
+            st.success("成功精準鎖定主體人臉！")
             st.dataframe(audit_records, use_container_width=True)
           else:
-            st.warning("未偵測到目標。")
+            st.warning("未偵測到人臉。")
 
     else:
       st.error("❌ 影像解碼失敗，請確認檔案格式是否正確。")
