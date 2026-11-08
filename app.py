@@ -267,7 +267,6 @@ else:
           )
 
           _, faces = detector.detect(img_bgr)
-
           cyan = (255, 255, 0)
 
           if faces is not None:
@@ -347,6 +346,3 @@ else:
 
   except Exception as e:
     st.error(f"❌ 讀取過程發生異常錯誤: {e}")
-
-else:
-  st.info("👈 請從左側選單上傳 PNG、JPG 或 BMP 圖片以開始進行分析。")
