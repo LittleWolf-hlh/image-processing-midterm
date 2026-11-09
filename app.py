@@ -14,31 +14,17 @@ st.set_page_config(
     layout="wide",
 )
 
-
 @st.cache_resource
 def get_yunet_onnx_model_path() -> str:
-    """下載並快取 OpenCV 官方 YuNet ONNX 人臉偵測模型，並驗證檔案正確性"""
+    """下載並快取 OpenCV 官方 YuNet ONNX 人臉偵測模型"""
     onnx_path = "face_detection_yunet_2023mar.onnx"
     onnx_url = "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
 
-    need_download = False
-    if not os.path.exists(onnx_path) or os.path.getsize(onnx_path) < 50000:
-        need_download = True
-    else:
-        # 檢查檔案是否誤下載成 HTML 錯誤網頁
-        with open(onnx_path, 'rb') as f:
-            header_snippet = f.read(100)
-            if b"<!DOCTYPE html>" in header_snippet or b"<html" in header_snippet:
-                need_download = True
-
-    if need_download:
+    if not os.path.exists(onnx_path) or os.path.getsize(onnx_path) < 10000:
         headers = {'User-Agent': 'Mozilla/5.0'}
         req = urllib.request.Request(onnx_url, headers=headers)
-        try:
-            with urllib.request.urlopen(req) as resp, open(onnx_path, 'wb') as f:
-                f.write(resp.read())
-        except Exception as e:
-            st.error(f"下載 YuNet 模型失敗: {e}")
+        with urllib.request.urlopen(req) as resp, open(onnx_path, 'wb') as f:
+            f.write(resp.read())
 
     return os.path.abspath(onnx_path)
 
@@ -85,7 +71,7 @@ if uploaded_file is not None:
                 st.image(
                     img_rgb,
                     caption=f"原始影像預覽: {uploaded_file.name}",
-                    use_container_width=True,
+                    width="stretch",
                 )
                 res_col, chan_col, size_col = st.columns(3)
                 res_col.metric("解析度（Width × Height）", f"{width} × {height}")
@@ -269,6 +255,7 @@ if uploaded_file is not None:
                 filtered_bgr = np.clip(filtered_bgr, 0, 255).astype(np.uint8)
                 filtered_rgb = cv2.cvtColor(filtered_bgr, cv2.COLOR_BGR2RGB)
 
+                # 計算 MSE 與 PSNR (已修正語法錯誤)
                 mse = np.mean((img_bgr.astype(np.float64) - filtered_bgr.astype(np.float64)) ** 2)
                 if mse == 0:
                     psnr_val = float('inf')
@@ -277,9 +264,9 @@ if uploaded_file is not None:
 
                 col_f1, col_f2 = st.columns(2)
                 with col_f1:
-                    st.image(img_rgb, caption="原始影像", use_container_width=True)
+                    st.image(img_rgb, caption="原始影像", width="stretch")
                 with col_f2:
-                    st.image(filtered_rgb, caption="濾波處理後影像", use_container_width=True)
+                    st.image(filtered_rgb, caption="濾波處理後影像", width="stretch")
 
                 st.markdown("---")
                 if psnr_val == float('inf'):
@@ -295,7 +282,9 @@ if uploaded_file is not None:
             with tab4:
                 st.subheader("OpenCV ONNX YuNet AI 人臉偵測模組")
 
+                # 固定黃金信心門檻 0.50，一鍵高精準辨識
                 conf_threshold = 0.50
+
                 annotated_img = img_rgb.copy()
                 face_count = 0
                 face_details = []
@@ -305,7 +294,7 @@ if uploaded_file is not None:
                     detector = cv2.FaceDetectorYN.create(
                         model=model_path,
                         config="",
-                        input_size=(int(width), int(height)),
+                        input_size=(width, height),
                         score_threshold=float(conf_threshold),
                         nms_threshold=0.3,
                         top_k=500
@@ -322,6 +311,7 @@ if uploaded_file is not None:
                             xmin, ymin, bw, bh = box
                             xmin, ymin = max(0, xmin), max(0, ymin)
 
+                            # 繪製綠色人臉 Bounding Box 與標籤
                             cv2.rectangle(annotated_img, (xmin, ymin), (xmin + bw, ymin + bh), (0, 255, 0), 3)
                             label = f"Face #{idx+1}: {confidence*100:.1f}%"
                             cv2.putText(annotated_img, label, (xmin, max(ymin - 10, 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
@@ -342,7 +332,7 @@ if uploaded_file is not None:
                     st.image(
                         annotated_img,
                         caption="人臉偵測結果標註圖",
-                        use_container_width=True,
+                        width="stretch",
                     )
 
                 with col_res2:
@@ -350,7 +340,7 @@ if uploaded_file is not None:
                     st.metric(label="偵測到的總人臉數量", value=f"{face_count} 人")
                     st.markdown("---")
                     if face_count > 0:
-                        st.dataframe(face_details, use_container_width=True)
+                        st.dataframe(face_details, width="stretch")
                     else:
                         st.warning("未偵測到人臉。")
 
