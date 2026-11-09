@@ -16,15 +16,18 @@ st.set_page_config(
 
 @st.cache_resource
 def get_yunet_onnx_model_path() -> str:
-    """下載並快取 OpenCV 官方 YuNet ONNX 人臉偵測模型"""
+    """從雲端穩定來源自動下載並快取 OpenCV YuNet ONNX 人臉偵測模型"""
     onnx_path = "face_detection_yunet_2023mar.onnx"
-    onnx_url = "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+    # 使用 Hugging Face 的直接二進位下載連結，避免 GitHub LFS 指標檔問題
+    onnx_url = "https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx"
 
-    if not os.path.exists(onnx_path) or os.path.getsize(onnx_path) < 10000:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        req = urllib.request.Request(onnx_url, headers=headers)
-        with urllib.request.urlopen(req) as resp, open(onnx_path, 'wb') as f:
-            f.write(resp.read())
+    # 檢查檔案是否存在，且大小是否正常（YuNet 模型約 233 KB，小於 100KB 代表下載失敗或抓到文字檔）
+    if not os.path.exists(onnx_path) or os.path.getsize(onnx_path) < 100000:
+        with st.spinner("正在從雲端下載 AI 人臉偵測模型 (YuNet)，請稍候..."):
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            req = urllib.request.Request(onnx_url, headers=headers)
+            with urllib.request.urlopen(req) as resp, open(onnx_path, 'wb') as f:
+                f.write(resp.read())
 
     return os.path.abspath(onnx_path)
 
@@ -255,7 +258,7 @@ if uploaded_file is not None:
                 filtered_bgr = np.clip(filtered_bgr, 0, 255).astype(np.uint8)
                 filtered_rgb = cv2.cvtColor(filtered_bgr, cv2.COLOR_BGR2RGB)
 
-                # 計算 MSE 與 PSNR (已修正語法錯誤)
+                # 計算 MSE 與 PSNR
                 mse = np.mean((img_bgr.astype(np.float64) - filtered_bgr.astype(np.float64)) ** 2)
                 if mse == 0:
                     psnr_val = float('inf')
@@ -282,7 +285,6 @@ if uploaded_file is not None:
             with tab4:
                 st.subheader("OpenCV ONNX YuNet AI 人臉偵測模組")
 
-                # 固定黃金信心門檻 0.50，一鍵高精準辨識
                 conf_threshold = 0.50
 
                 annotated_img = img_rgb.copy()
@@ -311,7 +313,6 @@ if uploaded_file is not None:
                             xmin, ymin, bw, bh = box
                             xmin, ymin = max(0, xmin), max(0, ymin)
 
-                            # 繪製綠色人臉 Bounding Box 與標籤
                             cv2.rectangle(annotated_img, (xmin, ymin), (xmin + bw, ymin + bh), (0, 255, 0), 3)
                             label = f"Face #{idx+1}: {confidence*100:.1f}%"
                             cv2.putText(annotated_img, label, (xmin, max(ymin - 10, 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
